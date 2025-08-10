@@ -2,15 +2,15 @@
   "name": "chatbot-api",
   "version": "1.0.0",
   "main": "chat/index.js",
-  "dependencies": {
-    "openai": "^4.6.0"
-  },
   "description": "",
-  "devDependencies": {},
+  "license": "ISC",
+  "author": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "dependencies": {
+    "@azure/openai": "^1.0.0"
+  },
+  "devDependencies": {}
 }

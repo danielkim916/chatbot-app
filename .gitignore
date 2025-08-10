@@ -1,0 +1,9 @@
+# dependencies
+node_modules/
+
+# development
+.vscode/
+
+# local settings
+.env
+local.settings.json

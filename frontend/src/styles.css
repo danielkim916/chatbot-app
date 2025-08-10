@@ -136,6 +136,11 @@ body {
   background: #f7f7f8;
 }
 
+.bubble.thinking {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .composer {
   position: sticky;
   bottom: 0;

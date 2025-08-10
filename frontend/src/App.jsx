@@ -1,5 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 
+function ThinkingBubble() {
+  const [text, setText] = useState('Thinking');
+
+  useEffect(() => {
+    const thinkingStates = ['Thinking', 'Thinking.', 'Thinking..', 'Thinking...'];
+    let currentState = 0;
+    const interval = setInterval(() => {
+      currentState = (currentState + 1) % thinkingStates.length;
+      setText(thinkingStates[currentState]);
+    }, 400);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="msg assistant">
+      <div className="avatar" aria-hidden="true">🤖</div>
+      <div className="bubble thinking">
+        {text}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [messages, setMessages] = useState([
     { role: 'system', content: 'New session started.' }
@@ -11,7 +34,7 @@ export default function App() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isLoading]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -83,6 +106,7 @@ export default function App() {
               </div>
             );
           })}
+          {isLoading && <ThinkingBubble />}
           <div ref={endRef} />
         </section>
 

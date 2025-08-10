@@ -1,16 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 export default function App() {
   const [messages, setMessages] = useState([
-    { role: 'system', content: '🖥️ How can I help you today?' }
+    { role: 'system', content: 'New session started.' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const endRef = useRef(null);
 
-  async function handleSend() {
-    if (!input.trim()) return;
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-    const userMessage = { role: 'user', content: input.trim() };
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+
+    const userMessage = { role: 'user', content: text };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput('');
@@ -35,36 +42,61 @@ export default function App() {
     }
   }
 
+  const labelFor = 'chat-input';
+
   return (
-    <div style={{ maxWidth: 600, margin: '0 auto', padding: 20 }}>
-      <h1>챗자피티 🤖</h1>
-      <div
-        style={{
-          border: '1px solid #ccc',
-          padding: 10,
-          height: 400,
-          overflowY: 'auto',
-          marginBottom: 10,
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {messages.map((m, i) => (
-          <div key={i} style={{ margin: '10px 0', textAlign: m.role === 'user' ? 'right' : 'left' }}>
-            <strong>{m.role === 'user' ? 'You' : m.role === 'assistant' ? 'Bot' : 'System'}:</strong> {m.content}
-          </div>
-        ))}
-      </div>
-      <input
-        value={input}
-        onChange={e => setInput(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && handleSend()}
-        disabled={isLoading}
-        style={{ width: '100%', padding: 10, fontSize: 16 }}
-        placeholder="Type your message..."
-      />
-      <button onClick={handleSend} disabled={isLoading || !input.trim()} style={{ marginTop: 10, padding: '10px 20px' }}>
-        Send
-      </button>
+    <div className="app">
+      <header className="header">
+        <div className="brand">
+          <span className="logo" aria-hidden="true">🤖</span>
+          <span className="title">챗자피티</span>
+        </div>
+      </header>
+
+      <main className="chat">
+        <section
+          className="messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+        >
+          {messages.map((m, i) => {
+            const kind = m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system';
+            return (
+              <div key={i} className={`msg ${kind}`}>
+                {kind !== 'user' && <div className="avatar" aria-hidden="true">{kind === 'assistant' ? '🤖' : 'ℹ️'}</div>}
+                <div className="bubble">
+                  {m.content}
+                </div>
+                {kind === 'user' && <div className="avatar" aria-hidden="true">🧑</div>}
+              </div>
+            );
+          })}
+          <div ref={endRef} />
+        </section>
+
+        <form className="composer" onSubmit={handleSubmit} autoComplete="off" spellCheck={false}>
+          <label htmlFor={labelFor} className="sr-only">Message</label>
+          <input
+            id={labelFor}
+            className="input"
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            disabled={isLoading}
+            placeholder="Type your message..."
+            autoComplete="off"
+            aria-autocomplete="none"
+            autoCorrect="off"
+            autoCapitalize="none"
+            inputMode="text"
+            name="message"
+          />
+          <button className="send" type="submit" disabled={isLoading || !input.trim()}>
+            {isLoading ? <span className="spinner" aria-label="Sending" /> : 'Send'}
+          </button>
+        </form>
+      </main>
     </div>
   );
 }

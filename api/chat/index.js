@@ -1,4 +1,4 @@
-const { OpenAIClient, AzureKeyCredential } = require("@azure/openai");
+const { AzureOpenAI } = require("openai");
 
 module.exports = async function (context, req) {
   context.log("Chat API called");
@@ -14,9 +14,10 @@ module.exports = async function (context, req) {
     return;
   }
 
-  const endpoint = process.env["AZURE_OPENAI_ENDPOINT"];
+  const endpoint = process.env["AZURE_OPENAI_ENDPOINT"]; // e.g., https://<resource>.openai.azure.com/
   const apiKey = process.env["AZURE_OPENAI_API_KEY"];
-  const deployment = process.env["AZURE_OPENAI_CHAT_DEPLOYMENT"]; // deployment name
+  const deployment = process.env["AZURE_OPENAI_CHAT_DEPLOYMENT"]; // your deployment name
+  const apiVersion = process.env["AZURE_OPENAI_API_VERSION"] || "2024-10-21";
 
   if (!endpoint || !apiKey || !deployment) {
     context.res = {
@@ -30,16 +31,12 @@ module.exports = async function (context, req) {
   }
 
   try {
-    const client = new OpenAIClient(endpoint, new AzureKeyCredential(apiKey));
-    const result = await client.getChatCompletions(deployment, messages);
-
-    const reply = result?.choices?.[0]?.message?.content ?? "";
+    const client = new AzureOpenAI({ endpoint, apiKey, deployment, apiVersion });
+    const completion = await client.chat.completions.create({ messages });
+    const reply = completion?.choices?.[0]?.message?.content ?? "";
     context.res = { status: 200, body: { reply } };
   } catch (error) {
-    context.log.error("AOI error:", error);
-    context.res = {
-      status: 500,
-      body: { error: error.message || "AOI request failed" }
-    };
+    context.log.error("Azure OpenAI error:", error);
+    context.res = { status: 500, body: { error: error.message || "Azure OpenAI request failed" } };
   }
 };

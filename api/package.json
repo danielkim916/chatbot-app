@@ -10,7 +10,6 @@
   },
   "keywords": [],
   "dependencies": {
-    "@azure/openai": "^1.0.0"
-  },
-  "devDependencies": {}
+    "openai": "^4.104.0"
+  }
 }

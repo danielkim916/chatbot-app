@@ -7,6 +7,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const endRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -21,6 +22,9 @@ export default function App() {
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput('');
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
     setIsLoading(true);
 
     // Call backend API
@@ -39,6 +43,13 @@ export default function App() {
       setMessages([...newMessages, { role: 'assistant', content: 'Error: ' + e.message }]);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   }
 
@@ -77,20 +88,24 @@ export default function App() {
 
         <form className="composer" onSubmit={handleSubmit} autoComplete="off" spellCheck={false}>
           <label htmlFor={labelFor} className="sr-only">Message</label>
-          <input
+          <textarea
+            ref={inputRef}
             id={labelFor}
             className="input"
-            type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
             disabled={isLoading}
             placeholder="Type your message..."
             autoComplete="off"
-            aria-autocomplete="none"
             autoCorrect="off"
             autoCapitalize="none"
-            inputMode="text"
             name="message"
+            rows={1}
+            onInput={(e) => {
+              e.target.style.height = 'auto';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
           />
           <button className="send" type="submit" disabled={isLoading || !input.trim()}>
             {isLoading ? <span className="spinner" aria-label="Sending" /> : 'Send'}

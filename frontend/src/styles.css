@@ -153,12 +153,14 @@ body {
   appearance: none;
   border: 1px solid var(--border);
   background: #fff;
-  border-radius: 999px;
+  border-radius: var(--radius);
   padding: 12px 16px;
   font-size: 16px;
   line-height: 1.2;
   outline: none;
   transition: box-shadow 160ms ease, border-color 160ms ease;
+  font-family: inherit;
+  resize: none;
 }
 
 .input:focus-visible {

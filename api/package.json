@@ -1,0 +1,15 @@
+{
+  "name": "chatbot-api",
+  "version": "1.0.0",
+  "main": "chat/index.js",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "dependencies": {
+    "openai": "^4.104.0"
+  }
+}

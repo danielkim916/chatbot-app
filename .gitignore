@@ -4,6 +4,7 @@ package-lock.json
 
 # development
 .vscode/
+.github/
 
 # local settings
 .env

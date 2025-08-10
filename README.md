@@ -1,6 +1,6 @@
-# Chat.Jawon — General-Purpose AI Chatbot (Powered by Azure OpenAI)
+# General-Purpose AI Chatbot (Powered by Azure OpenAI)
 
-**Live demo:** Coming soon at [chat.jawon.kim](http://chat.jawon.kim)  
+**Live demo:** [chat.jawon.kim](http://chat.jawon.kim)  
 **Repository:** Public on GitHub for transparency, learning, and open collaboration.
 
 ---

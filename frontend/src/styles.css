@@ -62,7 +62,7 @@ body {
 .chat {
   display: grid;
   grid-template-rows: 1fr auto;
-  gap: 12px;
+  gap: 0; /* Remove gap to keep messages and composer attached */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 2px);
@@ -219,6 +219,8 @@ body {
 
 .input {
   width: 100%;
+  -webkit-appearance: none;
+  -moz-appearance: none;
   appearance: none;
   border: 1px solid var(--border);
   background: #fff;
@@ -230,6 +232,16 @@ body {
   transition: box-shadow 160ms ease, border-color 160ms ease;
   font-family: inherit;
   resize: none;
+  -webkit-border-radius: var(--radius);
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.input:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
 }
 
 .input:focus-visible {
@@ -238,6 +250,8 @@ body {
 }
 
 .send {
+  -webkit-appearance: none;
+  -moz-appearance: none;
   appearance: none;
   border: 1px solid #1d4ed8;
   background: linear-gradient(180deg, #3b82f6, #2563eb);
@@ -249,6 +263,9 @@ body {
   cursor: pointer;
   transition: transform 80ms ease, box-shadow 160ms ease, opacity 160ms ease;
   box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
+  -webkit-border-radius: 999px;
+  min-height: 44px;
+  touch-action: manipulation;
 }
 
 .send:hover:not(:disabled) { transform: translateY(-1px); }
@@ -277,13 +294,117 @@ body {
   clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
 
-/* Reduce browser autofill styling if it ever appears */
-input:-webkit-autofill {
+/* Enhanced mobile input styling */
+input:-webkit-autofill,
+textarea:-webkit-autofill {
   -webkit-box-shadow: 0 0 0 30px #fff inset !important;
   -webkit-text-fill-color: var(--text) !important;
 }
 
+/* Mobile-specific media queries */
 @media (max-width: 640px) {
-  .app { padding: 16px 8px; }
-  .messages { padding: 12px; }
+  .app { 
+    padding: 16px 8px; 
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    /* Use full viewport for mobile to handle keyboard properly */
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+  
+  .messages { 
+    padding: 12px;
+    /* Allow messages area to shrink when keyboard appears */
+    min-height: 0;
+  }
+  
+  .chat {
+    /* Remove bottom margin - keep composer attached */
+    margin-bottom: 0;
+    /* Use full available height and let grid handle the layout */
+    height: 100%;
+    min-height: 0;
+  }
+  
+  .composer {
+    padding: 12px;
+    gap: 8px;
+    /* Keep as sticky instead of fixed to stay attached to chat */
+    position: sticky;
+    bottom: 0;
+    /* Remove fixed positioning styles */
+    left: auto;
+    right: auto;
+    margin: 0;
+    border-radius: 0;
+    /* Ensure it doesn't shrink */
+    flex-shrink: 0;
+  }
+  
+  .input {
+    font-size: 16px;
+    border-radius: 8px;
+  }
+  
+  .send {
+    padding: 10px 16px;
+    border-radius: 8px;
+  }
+}
+
+/* Handle viewport height changes on mobile (keyboard appearance) */
+@media (max-width: 640px) {
+  /* When keyboard appears, the viewport height changes */
+  .app {
+    /* Use visual viewport height when available */
+    height: 100vh;
+    height: 100dvh; /* Dynamic viewport height for newer browsers */
+  }
+  
+  .chat {
+    /* Allow chat to resize with viewport */
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  .messages {
+    /* Ensure messages can scroll in reduced space */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+/* iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 640px) {
+    .app {
+      /* Handle iOS viewport properly */
+      height: 100vh;
+      height: -webkit-fill-available;
+    }
+    
+    .composer {
+      /* Handle iOS safe area */
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    }
+    
+    .input {
+      font-size: 16px;
+      transform: translateZ(0);
+    }
+  }
+}
+
+/* Android specific fixes */
+@media screen and (-webkit-min-device-pixel-ratio: 0) {
+  @media (max-width: 640px) {
+    .input {
+      -webkit-text-size-adjust: 100%;
+    }
+    
+    /* Handle Android keyboard overlay */
+    .app {
+      height: 100vh;
+    }
+  }
 }

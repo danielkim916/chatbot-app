@@ -280,7 +280,7 @@ export default function App() {
             disabled={isLoading}
             placeholder="Type your message..."
             autoComplete="off"
-            autoCorrect="off"
+            autoCorrect="on"
             autoCapitalize="none"
             name="message"
             rows={1}

@@ -241,7 +241,7 @@ export default function App() {
       <header className="header">
         <div className="brand">
           <span className="logo" aria-hidden="true">🤖</span>
-          <span className="title">챗자피티</span>
+          <span className="title">Chat App (Dev)</span>
         </div>
       </header>
 

@@ -30,13 +30,18 @@ module.exports = async function (context, req) {
     return;
   }
 
+  // If the client asks for SSE, stream tokens as they arrive.
+  const wantsSSE =
+    (req.query && (req.query.stream === "1" || req.query.stream === "sse")) ||
+    (req.headers && typeof req.headers["accept"] === "string" && req.headers["accept"].includes("text/event-stream"));
+
   try {
     const client = new AzureOpenAI({ endpoint, apiKey, deployment, apiVersion });
-    
+
     // Prepend system prompt to messages
     const systemPrompt = {
       role: "system",
-        content: `You are an AI assistant with the personality of a highly capable, thoughtful, and precise professional. You are like a trusted colleague who listens carefully, thinks critically, and communicates with clarity and respect. You focus on deeply understanding the user's intent, asking clarifying questions when needed, and providing accurate, insightful, and efficient answers. Your goal is always to make the user feel supported and confident in the information you provide.  
+      content: `You are an AI assistant with the personality of a highly capable, thoughtful, and precise professional. You are like a trusted colleague who listens carefully, thinks critically, and communicates with clarity and respect. You focus on deeply understanding the user's intent, asking clarifying questions when needed, and providing accurate, insightful, and efficient answers. Your goal is always to make the user feel supported and confident in the information you provide.  
 
 In case writing the response requires knowledge of the current datetime, the current time is ${new Date().toString()}.  
 
@@ -77,6 +82,59 @@ This will horizontally and vertically center the content. If you need support fo
     };
 
     const messagesWithSystem = [systemPrompt, ...messages];
+
+    if (wantsSSE) {
+      // Stream using Server-Sent Events (SSE)
+      const headers = {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        // Some proxies buffer unless explicitly disabled:
+        "X-Accel-Buffering": "no",
+        Vary: "Accept"
+      };
+
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            const events = await client.chat.completions.create({
+              messages: messagesWithSystem,
+              stream: true
+            });
+
+            for await (const event of events) {
+              const delta = event?.choices?.[0]?.delta?.content ?? "";
+              if (delta) {
+                // Send the delta as an SSE data event. Use JSON-stringified payload for safety.
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+              }
+              const finish = event?.choices?.[0]?.finish_reason;
+              if (finish) {
+                break;
+              }
+            }
+
+            controller.enqueue(encoder.encode(`event: done\ndata: [DONE]\n\n`));
+            controller.close();
+          } catch (err) {
+            const message = (err && err.message) || "Azure OpenAI stream failed";
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(message)}\n\n`));
+            controller.close();
+          }
+        }
+      });
+
+      context.res = {
+        status: 200,
+        headers,
+        body: stream
+      };
+      return;
+    }
+
+    // Fallback: non-streaming JSON response
     const completion = await client.chat.completions.create({ messages: messagesWithSystem });
     const reply = completion?.choices?.[0]?.message?.content ?? "";
     context.res = { status: 200, body: { reply } };

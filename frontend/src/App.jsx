@@ -208,76 +208,13 @@ export default function App() {
     }
     setIsLoading(true);
 
+    // Call backend API
     try {
-      // Call backend API
-      const response = await fetch('/api/chat?stream=1', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages }),
       });
-
-      const contentType = response.headers.get('content-type') || '';
-
-      if (response.ok && contentType.includes('text/event-stream') && response.body) {
-        setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        let receivedAny = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk;
-
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() ?? '';
-
-          for (const part of parts) {
-            const lines = part.split('\n');
-            const dataLine = lines.find(l => l.startsWith('data: '));
-            const eventLine = lines.find(l => l.startsWith('event: '));
-            if (!dataLine) continue;
-
-            const raw = dataLine.slice('data: '.length).trim();
-            if (eventLine && eventLine.includes('done') && raw === '[DONE]') {
-              break;
-            }
-
-            let delta = '';
-            try {
-              delta = JSON.parse(raw);
-            } catch {
-              delta = raw;
-            }
-
-            if (delta) {
-              receivedAny = true;
-              setMessages(prev => {
-                if (prev.length === 0) return prev;
-                const copy = prev.slice();
-                const lastIdx = copy.length - 1;
-                if (copy[lastIdx].role !== 'assistant') {
-                  copy.push({ role: 'assistant', content: delta });
-                } else {
-                  copy[lastIdx] = { ...copy[lastIdx], content: (copy[lastIdx].content || '') + delta };
-                }
-                return copy;
-              });
-              if (receivedAny) setIsLoading(false);
-            }
-          }
-        }
-
-        setIsLoading(false);
-        return;
-      }
 
       if (!response.ok) throw new Error('API error');
 

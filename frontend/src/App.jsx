@@ -183,7 +183,7 @@ function MarkdownText({ content }) {
 
 export default function App() {
   const [messages, setMessages] = useState([
-    { role: 'system', content: 'New session started.' }
+    { role: 'system', content: 'New session started. Beta mode used: using model ${process.env.AZURE_OPENAI_CHAT_DEPLOYMENT}.' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

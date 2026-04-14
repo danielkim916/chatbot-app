@@ -144,30 +144,8 @@ body {
   font-style: italic;
 }
 
-/* Markdown formatting styles */
-.bold {
-  font-weight: 600;
-}
-
-.italic {
-  font-style: italic;
-}
-
-.bold.italic {
-  font-weight: 600;
-  font-style: italic;
-}
-
-.underline {
-  text-decoration: underline;
-}
-
-.strikethrough {
-  text-decoration: line-through;
-}
-
-/* Inline code styling - always black text for readability */
-.inline-code {
+/* Markdown formatting styles (react-markdown renders standard HTML elements) */
+.bubble code {
   background-color: var(--code-bg);
   color: var(--code-text) !important;
   padding: 0.2em 0.4em;
@@ -177,8 +155,7 @@ body {
   border: 1px solid var(--code-border);
 }
 
-/* Code block styling */
-.code-block {
+.bubble pre {
   background-color: var(--code-bg);
   border: 1px solid var(--code-border);
   border-radius: 6px;
@@ -188,9 +165,11 @@ body {
   font-size: 14px;
   line-height: 1.45;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  white-space: pre;
+  word-wrap: break-word;
 }
 
-.code-block code {
+.bubble pre code {
   background: transparent;
   color: var(--code-text);
   padding: 0;
@@ -199,10 +178,44 @@ body {
   border: none;
 }
 
-/* Ensure code blocks don't inherit bubble styling */
-.msg .bubble .code-block {
-  white-space: pre;
-  word-wrap: break-word;
+.bubble p {
+  margin: 0.5em 0;
+}
+
+.bubble p:first-child {
+  margin-top: 0;
+}
+
+.bubble p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble ul, .bubble ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.bubble blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0.5em 0;
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+.bubble table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+
+.bubble th, .bubble td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.bubble th {
+  background: var(--code-bg);
+  font-weight: 600;
 }
 
 .composer {

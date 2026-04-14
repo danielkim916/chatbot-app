@@ -1,4 +1,4 @@
-﻿const { AzureOpenAI } = require("openai");
+﻿const OpenAI = require("openai");
 
 module.exports = async function (context, req) {
   context.log("Chat API called");
@@ -14,24 +14,23 @@ module.exports = async function (context, req) {
     return;
   }
 
-  const endpoint = process.env["AZURE_OPENAI_ENDPOINT"];
-  const apiKey = process.env["AZURE_OPENAI_API_KEY"];
-  const deployment = process.env["AZURE_OPENAI_CHAT_DEPLOYMENT"];
-  const apiVersion = process.env["AZURE_OPENAI_API_VERSION"] || "2024-10-21";
+  const baseURL = process.env["LITELLM_ENDPOINT"];
+  const apiKey = process.env["LITELLM_API_KEY"];
+  const model = process.env["LITELLM_MODEL"] || "copilot-claude-opus-4.6-1m";
 
-  if (!endpoint || !apiKey || !deployment) {
+  if (!baseURL || !apiKey) {
     context.res = {
       status: 500,
       body: {
         error:
-          "Missing Azure OpenAI configuration. Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_CHAT_DEPLOYMENT."
+          "Missing API configuration. Set LITELLM_ENDPOINT and LITELLM_API_KEY."
       }
     };
     return;
   }
 
   try {
-    const client = new AzureOpenAI({ endpoint, apiKey, deployment, apiVersion });
+    const client = new OpenAI({ baseURL, apiKey });
     
     // Select system prompt based on mode
     const standardPromptContent = `You are a helpful, friendly AI assistant. You provide clear, accurate, and well-structured responses. You are polite, patient, and always willing to help.
@@ -84,11 +83,11 @@ Keep responses conversational and natural. You can be blunt, roll your virtual e
     };
 
     const messagesWithSystem = [systemPrompt, ...messages];
-    const completion = await client.chat.completions.create({ messages: messagesWithSystem });
+    const completion = await client.chat.completions.create({ model, messages: messagesWithSystem });
     const reply = completion?.choices?.[0]?.message?.content ?? "";
     context.res = { status: 200, body: { reply } };
   } catch (error) {
-    context.log.error("Azure OpenAI error:", error);
-    context.res = { status: 500, body: { error: error.message || "Azure OpenAI request failed" } };
+    context.log.error("API error:", error);
+    context.res = { status: 500, body: { error: error.message || "API request failed" } };
   }
 };

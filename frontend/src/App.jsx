@@ -43,6 +43,7 @@ export default function App() {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [mode, setMode] = useState('sarcastic');
   const [modelOptions, setModelOptions] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -116,8 +117,8 @@ export default function App() {
       inputRef.current.style.height = 'auto';
     }
     setIsLoading(true);
+    setIsStreaming(false);
 
-    // Call backend API
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -127,8 +128,40 @@ export default function App() {
 
       if (!response.ok) throw new Error('API error');
 
-      const data = await response.json();
-      setMessages([...newMessages, { role: 'assistant', content: data.reply }]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value, { stream: true });
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6);
+          if (payload === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(payload);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.content) {
+              accumulated += parsed.content;
+              setIsStreaming(true);
+              setMessages([...newMessages, { role: 'assistant', content: accumulated }]);
+            }
+          } catch (parseErr) {
+            if (parseErr.message !== 'Unexpected end of JSON input') throw parseErr;
+          }
+        }
+      }
+
+      // Final state in case no chunks arrived
+      if (!accumulated) {
+        setMessages([...newMessages, { role: 'assistant', content: 'No response received.' }]);
+      }
     } catch (e) {
       setMessages([...newMessages, { role: 'assistant', content: 'Error: ' + e.message }]);
     } finally {
@@ -226,7 +259,7 @@ export default function App() {
               </div>
             );
           })}
-          {isLoading && <ThinkingBubble />}
+          {isLoading && !isStreaming && <ThinkingBubble />}
           <div ref={endRef} />
         </section>
 

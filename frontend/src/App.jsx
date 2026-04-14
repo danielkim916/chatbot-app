@@ -39,6 +39,7 @@ export default function App() {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState('sarcastic');
   const endRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -65,7 +66,7 @@ export default function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, mode }),
       });
 
       if (!response.ok) throw new Error('API error');
@@ -94,6 +95,17 @@ export default function App() {
         <div className="brand">
           <span className="logo" aria-hidden="true">🤖</span>
           <span className="title">챗자피티</span>
+        </div>
+        <div className="mode-picker">
+          <select
+            value={mode}
+            onChange={e => setMode(e.target.value)}
+            disabled={isLoading}
+            aria-label="Chat mode"
+          >
+            <option value="standard">Standard</option>
+            <option value="sarcastic">Sarcastic</option>
+          </select>
         </div>
       </header>
 

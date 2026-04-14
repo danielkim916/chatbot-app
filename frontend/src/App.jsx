@@ -49,9 +49,18 @@ export default function App() {
   const [selectedModel, setSelectedModel] = useState('');
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const messagesRef = useRef(null);
+
+  function isNearBottom() {
+    const el = messagesRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isNearBottom()) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, isLoading]);
 
   useEffect(() => {
@@ -118,6 +127,9 @@ export default function App() {
     }
     setIsLoading(true);
     setIsStreaming(false);
+
+    // Scroll to bottom when user sends a new message
+    setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 0);
 
     try {
       const response = await fetch('/api/chat', {
@@ -242,6 +254,7 @@ export default function App() {
 
       <main className="chat">
         <section
+          ref={messagesRef}
           className="messages"
           role="log"
           aria-live="polite"

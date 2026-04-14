@@ -33,6 +33,10 @@ function MarkdownText({ content }) {
   );
 }
 
+function findModelOption(modelOptions, modelValue) {
+  return modelOptions.find((option) => option.value === modelValue);
+}
+
 export default function App() {
   const [messages, setMessages] = useState([
     { role: 'system', content: 'New session started.' }
@@ -40,12 +44,64 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState('sarcastic');
+  const [modelOptions, setModelOptions] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
   const endRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadChatConfig() {
+      try {
+        const response = await fetch('/api/chat');
+        if (!response.ok) {
+          throw new Error('Failed to load chat configuration');
+        }
+
+        const data = await response.json();
+        if (isCancelled) {
+          return;
+        }
+
+        const availableModels = Array.isArray(data.availableModels) ? data.availableModels : [];
+        const defaultModel = data.defaultModel || availableModels[0]?.value || '';
+        const defaultOption = findModelOption(availableModels, defaultModel);
+
+        setModelOptions(availableModels);
+        setSelectedModel(defaultModel);
+
+        if (defaultOption && defaultOption.supportsSarcastic === false) {
+          setMode('standard');
+        }
+      } catch {
+        if (!isCancelled) {
+          setModelOptions([]);
+          setSelectedModel('');
+        }
+      }
+    }
+
+    loadChatConfig();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  const hasModelDropdown = modelOptions.length > 0;
+  const activeModelOption = findModelOption(modelOptions, selectedModel);
+  const isSarcasticUnavailable = hasModelDropdown && activeModelOption?.supportsSarcastic === false;
+
+  useEffect(() => {
+    if (isSarcasticUnavailable && mode !== 'standard') {
+      setMode('standard');
+    }
+  }, [isSarcasticUnavailable, mode]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -66,7 +122,7 @@ export default function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, mode }),
+        body: JSON.stringify({ messages: newMessages, mode, model: selectedModel || undefined }),
       });
 
       if (!response.ok) throw new Error('API error');
@@ -87,7 +143,9 @@ export default function App() {
     }
   }
 
-  const labelFor = 'chat-input';
+  const inputLabelFor = 'chat-input';
+  const modeLabelFor = 'chat-mode';
+  const modelLabelFor = 'chat-model';
 
   return (
     <div className="app">
@@ -96,16 +154,56 @@ export default function App() {
           <span className="logo" aria-hidden="true">🤖</span>
           <span className="title">챗자피티</span>
         </div>
-        <div className="mode-picker">
-          <select
-            value={mode}
-            onChange={e => setMode(e.target.value)}
-            disabled={isLoading}
-            aria-label="Chat mode"
-          >
-            <option value="standard">Standard</option>
-            <option value="sarcastic">Sarcastic</option>
-          </select>
+        <div className="header-controls">
+          {hasModelDropdown && (
+            <div className="picker">
+              <label htmlFor={modelLabelFor} className="sr-only">Chat model</label>
+              <select
+                id={modelLabelFor}
+                className="picker-select"
+                value={selectedModel}
+                onChange={e => setSelectedModel(e.target.value)}
+                disabled={isLoading}
+                aria-label="Chat model"
+              >
+                {modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="picker picker-with-info">
+            <label htmlFor={modeLabelFor} className="sr-only">Chat mode</label>
+            <select
+              id={modeLabelFor}
+              className="picker-select"
+              value={mode}
+              onChange={e => setMode(e.target.value)}
+              disabled={isLoading || isSarcasticUnavailable}
+              aria-label="Chat mode"
+            >
+              <option value="standard">Standard</option>
+              <option value="sarcastic">Sarcastic</option>
+            </select>
+
+            {isSarcasticUnavailable && (
+              <div className="info-tooltip">
+                <button
+                  type="button"
+                  className="info-button"
+                  aria-label="Why is sarcastic mode unavailable?"
+                >
+                  i
+                </button>
+                <div className="info-tooltip-content" role="tooltip">
+                  Sarcastic mode isn't supported when using Anthropic models.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -133,10 +231,10 @@ export default function App() {
         </section>
 
         <form className="composer" onSubmit={handleSubmit} autoComplete="off" spellCheck={false}>
-          <label htmlFor={labelFor} className="sr-only">Message</label>
+          <label htmlFor={inputLabelFor} className="sr-only">Message</label>
           <textarea
             ref={inputRef}
-            id={labelFor}
+            id={inputLabelFor}
             className="input"
             value={input}
             onChange={e => setInput(e.target.value)}

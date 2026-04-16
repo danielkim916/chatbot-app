@@ -212,7 +212,6 @@ body {
   padding: 10px 12px;
   border-radius: 12px;
   line-height: 1.45;
-  white-space: pre-wrap;
 }
 
 .msg.user {
@@ -225,6 +224,7 @@ body {
   color: var(--primary-ink);
   border: none;
   justify-self: end;
+  white-space: pre-wrap;
 }
 
 .msg.user .avatar {

@@ -8,7 +8,7 @@ const configuration = {
     { label: 'Claude Opus 4.8', value: 'claude-opus-4.8', supportsSarcastic: false }
   ],
   defaultModel: 'gpt-5.6-sol',
-  search: { enabled: true, maxResults: 5 },
+  search: { enabled: true, maxResults: 5, modes: ['off', 'auto', 'on'], defaultMode: 'auto' },
   limits: { maxMessageLength: 12000, maxMessages: 40, maxContextLength: 48000 }
 };
 const sse = (events) => events.map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -34,7 +34,13 @@ test('compact branding, model order, tone and theme without the extra interface'
   await expect(page.locator('aside')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /download/i })).toHaveCount(0);
   await expect(page.getByText(/reimagined|a clearer way|powered by|space for curiosity|download to keep/i)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Search web' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('combobox', { name: 'Web search' })).toHaveValue('auto');
+  await expect(page.getByRole('combobox', { name: 'Web search' }).locator('option')).toHaveText(['Off', 'Auto', 'On']);
+  await expect(page.locator('.brand-mark')).toBeVisible();
+  expect(await page.evaluate(async () => {
+    await document.fonts.ready;
+    return [...document.fonts].some((font) => font.family.includes('Gugi Brand') && font.status === 'loaded');
+  })).toBe(true);
   await expect(page.getByLabel('Your model').locator('option')).toHaveText(['GPT 5.6 Sol', 'GPT 5.6 Terra', 'GPT 5.6 Luna', 'Claude Opus 4.8']);
   await expect(page.getByLabel('Response tone').locator('option')).toHaveText(['Standard', 'Sarcastic']);
   await page.getByLabel('Your model').selectOption('claude-opus-4.8');
@@ -55,13 +61,14 @@ test('normal chat and follow-up preserve Unicode and completed history', async (
   }));
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Hello');
   await page.getByRole('button', { name: 'Send message' }).click();
-  await expect(page.getByText('Answer complete', { exact: true })).toBeVisible();
+  await expect(page.getByText('Answered without web', { exact: true })).toBeVisible();
   await expect(page.getByText('Hello, 안녕하세요 🌍')).toBeVisible();
-  expect(requests[0].webSearch).toBe(false);
+  expect(requests[0].searchMode).toBe('auto');
+  expect(requests[0].webSearch).toBeUndefined();
   expect(requests[0].messages).toEqual([{ role: 'user', content: 'Hello' }]);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A follow-up');
   await page.getByRole('button', { name: 'Send message' }).click();
-  await expect(page.getByText('Answer complete', { exact: true })).toHaveCount(2);
+  await expect(page.getByText('Answered without web', { exact: true })).toHaveCount(2);
   expect(requests[1].messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
   expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
   expect(errors).toEqual([]);
@@ -79,8 +86,8 @@ test('web search cites actual sources without rendering injected HTML, images or
     ])
   }));
   const before = await page.locator('.composer').boundingBox();
-  await page.getByRole('button', { name: 'Search web' }).click();
-  await expect(page.getByText('Search terms from this chat are sent to Tavily.')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Web search' }).selectOption('on');
+  await expect(page.getByText('Web is on. Search terms are sent to Tavily.')).toBeVisible();
   await expect(page.getByRole('textbox')).toHaveCount(1);
   const after = await page.locator('.composer').boundingBox();
   expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);
@@ -88,7 +95,7 @@ test('web search cites actual sources without rendering injected HTML, images or
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect(page.getByText('Web-assisted answer', { exact: true })).toBeVisible();
   expect(requests[0].searchQuery).toBeUndefined();
-  expect(requests[0].webSearch).toBe(true);
+  expect(requests[0].searchMode).toBe('on');
   await page.locator('.sources summary').click();
   await expect(page.getByRole('link', { name: 'Fetch API - MDN', exact: false })).toBeVisible();
   await expect(page.locator('.answer-text a')).toHaveCount(2);
@@ -110,20 +117,24 @@ test('search failures stay explicit, keep partial text and can retry with anothe
       ? sse([{ content: 'A partial answer.' }, { error: 'The free search provider is at its limit. Turn search off or try again later.' }])
       : sse([{ content: 'Recovered answer.' }, '[DONE]'])
   }));
-  await page.getByRole('button', { name: 'Search web' }).click();
+  await page.getByRole('combobox', { name: 'Web search' }).selectOption('on');
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A question');
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect(page.getByRole('alert')).toContainText('free search provider');
   await expect(page.getByText('A partial answer.')).toBeVisible();
   await expect(page.getByText('Answer complete', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Search web' }).click();
+  await page.getByRole('combobox', { name: 'Web search' }).selectOption('off');
   await page.getByLabel('Your model').selectOption('gpt-5.6-luna');
   await page.getByRole('button', { name: 'Try again' }).click();
   await expect(page.getByText('Recovered answer.')).toBeVisible();
   expect(requests[1].messages).toHaveLength(1);
   expect(requests[1].model).toBe('gpt-5.6-luna');
-  expect(requests[0].webSearch).toBe(true);
-  expect(requests[1].webSearch).toBe(false);
+  expect(requests[0].searchMode).toBe('on');
+  expect(requests[1].searchMode).toBe('off');
+  await expect(page.getByRole('group', { name: 'Response versions' })).toContainText('2 of 2');
+  await page.getByRole('button', { name: 'Previous response' }).click();
+  await expect(page.getByText('A partial answer.')).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('free search provider');
 });
 
 test('stop and new chat work without export or persistent history', async ({ page }) => {
@@ -185,7 +196,7 @@ test('streaming never pulls the reader down or steals focus, even after jumping 
   await expect(page.getByText('More streamed text.', { exact: false })).toBeAttached();
   expect(await area.evaluate((element) => element.scrollTop)).toBe(jumpedTop);
   await page.evaluate(() => window.testChatStream.finish());
-  await expect(page.getByText('Answer complete', { exact: true })).toBeAttached();
+  await expect(page.getByText('Answered without web', { exact: true })).toBeAttached();
   await expect(area).toBeFocused();
   expect(await area.evaluate((element) => element.scrollTop)).toBe(jumpedTop);
 });
@@ -199,7 +210,7 @@ test('keyboard handling preserves shift-enter and IME composition', async ({ pag
   await input.press('Shift+Enter');
   await expect(input).toHaveValue('안녕\n');
   await input.press('Enter');
-  await expect(page.getByText('Answer complete', { exact: true })).toBeVisible();
+  await expect(page.getByText('Answered without web', { exact: true })).toBeVisible();
   expect(requests).toHaveLength(1);
 });
 

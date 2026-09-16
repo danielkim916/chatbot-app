@@ -54,3 +54,29 @@ test("corrupt persisted state is not silently reset", (t) => {
   fs.writeFileSync(config.stateFile, '{"date":"bad","chats":-1,"searches":0}');
   assert.throws(() => new UsageLimits(config), /invalid/);
 });
+
+test("Auto charges search only after the decision, independently of an already-reserved chat", (t) => {
+  const config = fixture(t, { dailyChats: 1, dailySearches: 1 });
+  const limits = new UsageLimits(config);
+  const release = limits.reserve("a");
+  assert.equal(limits.state.chats, 1);
+  assert.equal(limits.state.searches, 0);
+  limits.reserveSearch();
+  assert.equal(limits.state.chats, 1);
+  assert.equal(limits.state.searches, 1);
+  assert.throws(() => limits.reserveSearch(), { code: "daily_limit" });
+  const restored = new UsageLimits(config);
+  assert.equal(restored.state.searches, 1);
+  release();
+});
+
+test("search reservation fails closed without releasing another active request", (t) => {
+  const limits = new UsageLimits(fixture(t));
+  const release = limits.reserve("a");
+  limits.persist = () => { throw new Error("disk unavailable"); };
+  assert.throws(() => limits.reserveSearch(), { code: "budget_unavailable" });
+  assert.equal(limits.state.searches, 0);
+  assert.ok(limits.inflight.has("a"));
+  release();
+  assert.equal(limits.inflight.size, 0);
+});

@@ -15,6 +15,7 @@ async function fixture(t, overrides = {}) {
     perMinute: 10, concurrent: 3, dailyChats: 100, dailySearches: 20,
     stateFile: path.join(directory, "budget.json")
   };
+  if (overrides.initialState) fs.writeFileSync(config.stateFile, JSON.stringify(overrides.initialState));
   const calls = [];
   const app = createApp({ ...config, ...overrides.config }, {
     logger: { warn() {} },
@@ -23,7 +24,7 @@ async function fixture(t, overrides = {}) {
         calls.push({ request, options });
         if (overrides.create) return overrides.create(request, options);
         if (request.stream === false) {
-          return { choices: [{ message: { content: '{"query":"focused public query"}' } }] };
+          return { choices: [{ message: { content: JSON.stringify(overrides.plan || { search: true, query: "focused public query" }) } }] };
         }
         return (async function* () { yield { choices: [{ delta: { content: "Hello, 안녕하세요 [1](source:1)" } }] }; })();
       } } }
@@ -41,7 +42,11 @@ async function fixture(t, overrides = {}) {
   const url = `http://127.0.0.1:${server.address().port}`;
   const post = (body = {}, headers = {}) => fetch(`${url}/api/chat`, {
     method: "POST", headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({ messages: [{ role: "user", content: "What is new?" }], ...body })
+    body: JSON.stringify({
+      messages: [{ role: "user", content: "What is new?" }],
+      ...(body.searchMode === undefined && body.webSearch === undefined ? { searchMode: "off" } : {}),
+      ...body
+    })
   });
   return { url, post, calls };
 }
@@ -54,6 +59,8 @@ test("public model configuration contains capabilities, not keys or endpoint sec
   assert.match(response.headers.get("cache-control"), /no-store/);
   assert.equal(response.headers.get("x-powered-by"), null);
   assert.equal(JSON.parse(body).search.enabled, true);
+  assert.equal(JSON.parse(body).search.defaultMode, "auto");
+  assert.deepEqual(JSON.parse(body).search.modes, ["off", "auto", "on"]);
   assert.ok(!body.includes("NEVER-EXPOSE"));
 });
 
@@ -68,7 +75,55 @@ test("normal chat streams without search and honors the chosen model", async (t)
   assert.equal(calls.length, 1);
   assert.equal(calls[0].request.model, "claude-opus-4.8");
   assert.equal(calls[0].request.max_tokens, 4096);
-  assert.match(calls[0].request.messages[0].content, /search is OFF/);
+  assert.match(calls[0].request.messages[0].content, /No web results were retrieved/);
+});
+
+test("Auto answers routine requests without search even when the search quota is exhausted", async (t) => {
+  let searched = false;
+  const { post, calls } = await fixture(t, {
+    config: { dailySearches: 1 },
+    initialState: { date: new Date().toISOString().slice(0, 10), chats: 0, searches: 1 },
+    plan: { search: false, query: null },
+    search: async () => { searched = true; }
+  });
+  const body = await (await post({ searchMode: "auto", messages: [{ role: "user", content: "Explain a for loop." }] })).text();
+  assert.match(body, /"action":"answer"/);
+  assert.match(body, /data: \[DONE\]/);
+  assert.equal(calls.length, 2);
+  assert.equal(searched, false);
+  assert.match(calls[1].request.messages[0].content, /No web results/);
+});
+
+test("Auto cannot bypass an exhausted search quota by asking the model to search", async (t) => {
+  let searched = false;
+  const { post, calls } = await fixture(t, {
+    config: { dailySearches: 1 },
+    initialState: { date: new Date().toISOString().slice(0, 10), chats: 0, searches: 1 },
+    search: async () => { searched = true; }
+  });
+  const body = await (await post({ searchMode: "auto" })).text();
+  assert.match(body, /"code":"daily_limit"/);
+  assert.ok(!body.includes("[DONE]"));
+  assert.equal(calls.length, 1);
+  assert.equal(searched, false);
+});
+
+test("Auto retrieves evidence before answering when the decision requires search", async (t) => {
+  const { post, calls } = await fixture(t);
+  const body = await (await post({ searchMode: "auto" })).text();
+  assert.match(body, /"action":"search"/);
+  assert.match(body, /"type":"sources"/);
+  assert.match(body, /data: \[DONE\]/);
+  assert.equal(calls.length, 2);
+});
+
+test("sarcastic replies reassert the voice without contaminating the planner's conversation", async (t) => {
+  const { post, calls } = await fixture(t);
+  const question = "Help me write a status update.";
+  await (await post({ searchMode: "on", mode: "sarcastic", messages: [{ role: "user", content: question }] })).text();
+  assert.ok(!calls[0].request.messages[1].content.includes("weary, sassy office veteran"));
+  assert.match(calls[1].request.messages[1].content, /weary, sassy office veteran/);
+  assert.ok(calls[1].request.messages[1].content.endsWith(question));
 });
 
 test("search emits verified source metadata and adds untrusted evidence with no tools", async (t) => {

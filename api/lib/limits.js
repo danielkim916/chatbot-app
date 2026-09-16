@@ -32,7 +32,7 @@ class UsageLimits {
     fs.renameSync(temporary, this.config.stateFile);
   }
 
-  reserve(client, search) {
+  reserve(client, search = false) {
     const now = this.now();
     const window = Math.floor(now / 60000);
     if (window !== this.window) {
@@ -51,16 +51,27 @@ class UsageLimits {
     if (this.inflight.has(client) || this.inflight.size >= this.config.concurrent) {
       throw new HttpError(429, "busy", "Another response is in progress. Please try again shortly.", 5);
     }
+    this.reserveDaily(1, Number(search));
+    this.inflight.add(client);
+    return () => this.inflight.delete(client);
+  }
+
+  reserveSearch() {
+    this.reserveDaily(0, 1);
+  }
+
+  reserveDaily(chats, searches) {
+    const now = this.now();
     const date = new Date(now).toISOString().slice(0, 10);
     const state = date > this.state.date ? { date, chats: 0, searches: 0 } : this.state;
-    if (state.chats >= this.config.dailyChats || (search && state.searches >= this.config.dailySearches)) {
+    if ((chats && state.chats >= this.config.dailyChats) || (searches && state.searches >= this.config.dailySearches)) {
       throw new HttpError(429, "daily_limit",
-        search && state.searches >= this.config.dailySearches
+        searches && state.searches >= this.config.dailySearches
           ? "Today's shared web search budget is used up. Turn search off or try again after midnight UTC."
           : "Today's shared chat budget is used up. Please try again after midnight UTC.",
         Math.ceil((Date.parse(`${date}T00:00:00Z`) + 86400000 - now) / 1000));
     }
-    const next = { date: state.date, chats: state.chats + 1, searches: state.searches + Number(search) };
+    const next = { date: state.date, chats: state.chats + chats, searches: state.searches + searches };
     try {
       // Reserve before contacting providers; one process owns this atomic, restart-persistent budget.
       this.persist(next);
@@ -68,8 +79,6 @@ class UsageLimits {
       throw new HttpError(503, "budget_unavailable", "Usage limits are temporarily unavailable. Please try again later.");
     }
     this.state = next;
-    this.inflight.add(client);
-    return () => this.inflight.delete(client);
   }
 }
 

@@ -1,24 +1,33 @@
 # Chatjapiti
 
-[chat.jawon.kim](https://chat.jawon.kim) is a small, multi-model chatbot with streaming answers and opt-in, cited web search. React and an Express API run behind Nginx on an Ubuntu VM. **LiteLLM remains the model gateway.**
+[chat.jawon.kim](https://chat.jawon.kim) is a small, multi-model chatbot with streaming answers, response branches, and configurable cited web search. React and an Express API run behind Nginx on an Ubuntu VM. **LiteLLM remains the model gateway.**
 
 ## What it does
 
 - Choose GPT 5.6 Sol (default), Terra, Luna, or Claude Opus 4.8, in that order.
-- Turn on **Search web** to let the selected model plan one focused query from the conversation, retrieve keyless Tavily results, then answer with citations. There is no manual query field; search remains explicitly opt-in.
-- Use **Standard** or **Sarcastic** tone. Sarcastic is sassy, dry, and mock-exasperated while still helpful; Claude retains its existing Standard-only setting.
+- Choose **Web Off / Auto / On**. Auto is the default: the selected model decides whether fresh evidence is needed, then plans at most one query. Off skips routing and search; On explicitly requests a search.
+- Use **Standard** or **Sarcastic** tone. Sarcastic is a weary, competent office veteran with dry observations and mock reluctance, rather than cheerful customer support. The voice is reasserted for each answer without influencing the search planner. Claude retains its existing Standard-only setting.
 - View numbered sources, stream Markdown, stop a response, retry with different settings, or copy an answer.
-- Use a compact header, model selector, new-chat button, and light/dark switch. There is no sidebar, promotional copy, or conversation export.
+- **Try again** adds a response version instead of overwriting one. Previous/next arrows select 1 of 2, 2 of 2, and so on. Each version keeps its model, web setting, source list, and follow-up branch.
+- Use the compact header with a custom speech-bubble mark, Korean display wordmark, model selector, new-chat button, and light/dark switch. There is no sidebar, promotional copy, or conversation export.
 - Read freely while responses stream. The page reveals each new turn once, then preserves your scroll position and focus. **Latest** jumps down once; it does not enable automatic following.
-- Keep conversation history in page memory only; reloading or starting a new chat clears it. Only completed turns are sent as subsequent context.
+- Keep conversation history and all versions in page memory only; reloading or starting a new chat clears them. Only completed turns on the selected branch are sent as subsequent context.
 
 ```text
 Browser -> Nginx -> Node API :3001 -> LiteLLM :4000 -> model provider
                          |
-                         +-> Tavily keyless search (only when opted in)
+                         +-> Tavily keyless search (On, or an Auto decision)
 ```
 
 The UI never receives API credentials. Search results are snippets, not full-page verification. Citations identify retrieved sources, not a guarantee that every generated claim is correct.
+
+## Response versions
+
+Regenerating any response creates a sibling under the same question and selects it. Earlier responses and their descendants remain intact. Returning to an earlier version restores its existing follow-ups; continuing from a different version creates a separate branch. Regeneration uses only the selected history before that question, not the old answer or other branches.
+
+Changing versions makes no API calls. Generating a version uses the currently selected model, tone, and web setting. Failed or stopped attempts are retained for inspection; earlier successful versions remain available. Branch controls are disabled during generation to avoid changing context mid-request.
+
+The browser stores at most 200 message nodes and approximately two million text characters, reserving room for the next answer. Reaching that limit shows an explicit new-chat notice; old versions are not silently removed. Backend per-request context limits still apply to the selected path.
 
 ## Run locally
 
@@ -54,13 +63,15 @@ Open `http://localhost:3000`. Vite proxies `/api` to `127.0.0.1:3001`. `CHAT_ORI
 | `CHAT_ORIGIN` | `http://localhost:3000`; systemd sets the production origin |
 | `WEB_SEARCH_ENABLED` | `true`; set `false` to disable search without disabling chat |
 | `CHAT_DAILY_LIMIT` | 300 accepted requests per UTC day, shared across the site |
-| `SEARCH_DAILY_LIMIT` | 80 search-enabled requests per UTC day, shared across the site |
+| `SEARCH_DAILY_LIMIT` | 80 reserved searches per UTC day, shared across the site |
 | `CHAT_PER_MINUTE` | 10 requests per client IP per fixed minute |
 | `CHAT_CONCURRENCY` | 3 globally; at most one in-flight request per IP |
 | `CHAT_TIMEOUT_MS` | 120000 overall; query planning has a 20-second deadline and Tavily has a 12-second deadline |
 | `CHAT_STATE_FILE` | `~/.local/state/chatbot-api/budget.json`; systemd uses `/var/lib/chatbot-api/budget.json` |
 
-Daily quotas are reserved **before** contacting providers, including failed or canceled calls. One search-enabled request can make two model calls (query planning, then the answer) and one search call; the quotas count accepted user requests, not model calls. Planning is capped at 512 output tokens and answering at 4,096. Quotas persist atomically across process restarts; corrupt/unwritable state fails closed. Only a date and counts are stored, not questions, IPs, or answers. Minute limits are in memory. **Run exactly one API process**; multi-instance deployment requires a shared atomic quota store.
+Chat quota is reserved before any model call. On also reserves search quota before planning; Auto reserves search quota only if its decision requires search, immediately before contacting Tavily. Failed or canceled reservations still count. Auto decisions never bypass an exhausted search budget, while Auto answers that need no search still work when that budget is exhausted.
+
+Off makes one answer call. Auto and On can make two model calls (routing/planning, then the answer) and at most one search call; quotas count user requests and reserved searches, not model calls. Routing adds some latency even when Auto chooses not to search. Planning is capped at 512 output tokens and answering at 4,096. Quotas persist atomically across process restarts; corrupt/unwritable state fails closed. Only a date and counts are stored, not questions, IPs, or answers. Minute limits are in memory. **Run exactly one API process**; multi-instance deployment requires a shared atomic quota store.
 
 These are modest public-demo limits, not account-level authentication or a billing guarantee. Shared IPs share a quota; distributed clients can bypass IP limits but not the site's persisted daily caps. Use authentication and provider-side spending limits before offering larger quotas.
 
@@ -68,14 +79,14 @@ The example LiteLLM mappings in `deploy/litellm.example.yaml` document the curre
 
 ## How search works
 
-1. The user opts in for that turn. Search is off initially.
-2. The server asks the selected model, through LiteLLM, to interpret the full bounded conversation and return one JSON search query. For example, "search that for the latest" after discussing the James Webb Space Telescope should produce a telescope-news query, not a search for those literal words. The UI shows a brief preparation status, not the model's internal reasoning.
-3. The server validates the plan: exactly one query, at most 400 characters, no control characters or additional execution parameters. An unclear topic asks the user to clarify; malformed plans or planner failures do not fall back to blindly searching the latest message. Client-provided `searchQuery` fields are ignored.
+1. Web mode defaults to Auto. Off is a hard backend gate: no routing call and no search, regardless of instructions in the messages. On requests a search; if no topic is identifiable, it asks for clarification.
+2. In Auto, the selected model decides whether current evidence or an explicit lookup is needed. Greetings, creative writing, translation, math, ordinary coding explanations, and sufficient supplied context normally do not need search. Current news, changing facts, verification and explicit source requests do. The decision is not infallible; Off and On provide user overrides.
+3. The model receives only the selected conversation path and returns `{"search":false,"query":null}` or `{"search":true,"query":"..."}`. For example, "search that for the latest" after discussing the James Webb Space Telescope should produce a telescope-news query. The server enforces the mode, validates a single query of at most 400 characters, and rejects extra actions, malformed output, and control characters. It never falls back to blindly searching the latest message. Client-provided `searchQuery` fields are ignored.
 4. Only the planned query goes to the fixed `https://api.tavily.com/search` endpoint with `X-Tavily-Access-Mode: keyless`. Up to five valid, deduplicated public source URLs and 1,800-character snippets per source are accepted. The total upstream response is limited to 1 MiB. No redirects, arbitrary fetch endpoint, images, crawling, or extraction are enabled.
 5. The server sends structured, explicitly untrusted reference data to the chosen model through LiteLLM. The system prompt requests `[1](source:1)` citations; the browser also accepts plain `[1]` markers outside code/links, resolving only IDs of actual retrieved sources. Follow-up context retains source URLs, and the source panel identifies the planned query.
-6. Failure, exhaustion, empty results, or timeout produces a visible error, not a silent fallback pretending to have researched an answer. Turn search off for an ordinary answer. Stopping cancels planning, search, or answer generation as appropriate.
+6. The UI distinguishes answers with retrieved sources from answers without web access. Failure, exhaustion, empty results, or timeout produces a visible error, not a silent fallback pretending to have researched an answer. Choose Off for an ordinary answer. Stopping cancels routing, search, or answer generation as appropriate.
 
-[Tavily keyless access](https://docs.tavily.com/documentation/keyless) requires no account/key but is rate-limited with no documented numeric allowance or availability guarantee. The site's 80/day cap is **our** cap, not a promised provider allocation. Generated queries may contain terms from earlier turns and are disclosed to Tavily; the full conversation stays with the existing model provider, not the search provider. The planner is instructed to omit unnecessary private information, but this is not guaranteed anonymization. Do not enable search for confidential discussions.
+[Tavily keyless access](https://docs.tavily.com/documentation/keyless) requires no account/key but is rate-limited with no documented numeric allowance or availability guarantee. The site's 80/day cap is **our** cap, not a promised provider allocation. In Auto or On, generated queries may contain terms from earlier turns on the selected branch and are disclosed to Tavily; the full conversation stays with the existing model provider, not the search provider. The planner is instructed to omit unnecessary private information, but this is not guaranteed anonymization. **Choose Off for confidential discussions.**
 
 ## Boundaries and limitations
 
@@ -140,11 +151,13 @@ journalctl -u chatbot-api --since '10 minutes ago' --no-pager
   "messages": [{"role": "user", "content": "Explain the Fetch API."}],
   "model": "gpt-5.6-sol",
   "mode": "standard",
-  "webSearch": true
+  "searchMode": "auto"
 }
 ```
 
-The SSE stream emits `meta`, `status` (`planning`, `searching`, `thinking`), and `sources` (including the planned `query`) objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. With search off there is no planning/search call. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
+`searchMode` accepts `off`, `auto`, or `on`; missing options default to Auto when search is enabled, otherwise Off. For older clients, `webSearch: true/false` maps to On/Off. Supplying both fields is rejected.
+
+The SSE stream emits `meta`, `status` (`planning`, `searching`, `thinking`), `web` (the decision's `mode` and `action: "search" | "answer"`), and `sources` (including the planned `query`) objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. A web decision is not a claim that retrieval succeeded; source metadata is emitted only after successful retrieval. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
 
 ```bash
 npm test --prefix api
@@ -154,6 +167,10 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Node tests exercise validation, persistent quotas, context-aware query planning, fixed search routing, data bounds, stream errors and cancellation. Playwright uses mocked APIs and incremental streams for deterministic desktop/mobile checks, including preserved reading position, without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
+Node tests exercise mode validation, independent persistent quotas, context-aware routing, fixed search endpoints, data bounds, stream errors, cancellation, and branch isolation. Playwright uses mocked APIs and incremental streams for desktop/mobile checks, including nested branch restoration and preserved reading position, without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
 
-Built by Jawon Kim. MIT licensed.
+## Brand assets and license
+
+The speech-bubble mark is part of this project. The wordmark uses a self-hosted, 9.6 kB [Gugi](https://github.com/google/fonts/tree/main/ofl/gugi) subset containing only the product name's Korean glyphs. It was obtained through Google's font subset endpoint; visitors do not contact Google for fonts. Gugi is copyright TAE System & Typefaces Co. and distributed under the SIL Open Font License in `frontend/public/fonts/OFL-Gugi.txt`.
+
+Built by Jawon Kim. Application code is MIT licensed; the font retains its separate SIL Open Font License.

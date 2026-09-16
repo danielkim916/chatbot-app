@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { completedHistory, consumeStream, remarkCitations, safeLink } from './chat.mjs';
+import { appendResponse, appendTurn, emptyConversation, responseVersions, selectResponse, updateResponse, visibleMessages } from './conversation.mjs';
 
 function Icon({ name, ...props }) {
   const paths = {
@@ -16,9 +17,20 @@ function Icon({ name, ...props }) {
     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
     link: <path d="M14 3h7v7m0-7L10 14M10 3H3v18h18v-7" />,
     down: <path d="m6 10 6 6 6-6" />,
+    previous: <path d="m14 6-6 6 6 6" />,
+    next: <path d="m10 6 6 6-6 6" />,
     check: <path d="m5 12 4 4L19 6" />
   };
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>{paths[name]}</svg>;
+}
+
+function BrandMark({ className = '' }) {
+  return <svg className={className} viewBox="0 0 40 40" aria-hidden="true">
+    <path d="M11 4h18a8 8 0 0 1 8 8v14a8 8 0 0 1-8 8H16l-8 5v-7a8 8 0 0 1-5-7V12a8 8 0 0 1 8-8Z" fill="currentColor" />
+    <g fill="none" stroke="var(--bg)" strokeWidth="2.5" strokeLinecap="round">
+      <path d="m10 15 6 1m8 0 6-2M14 25c4 2 8 2 12-1" />
+    </g>
+  </svg>;
 }
 
 function Answer({ message }) {
@@ -44,14 +56,15 @@ function Answer({ message }) {
 }
 
 export default function App() {
-  const [messages, setMessages] = useState([]);
+  const [conversation, setConversation] = useState(emptyConversation);
+  const messages = useMemo(() => visibleMessages(conversation), [conversation]);
   const [input, setInput] = useState('');
   const [config, setConfig] = useState(null);
   const [configError, setConfigError] = useState('');
   const [configAttempt, setConfigAttempt] = useState(0);
   const [model, setModel] = useState('');
   const [mode, setMode] = useState('standard');
-  const [webSearch, setWebSearch] = useState(false);
+  const [searchMode, setSearchMode] = useState('auto');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [showLatest, setShowLatest] = useState(false);
@@ -59,7 +72,7 @@ export default function App() {
   const abortRef = useRef(null);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
-  const latestTurnId = messages.at(-2)?.id;
+  const [revealTurn, setRevealTurn] = useState(0);
   const activeModel = config?.availableModels.find((option) => option.value === model);
   const maxMessage = config?.limits.maxMessageLength || 12000;
 
@@ -83,6 +96,7 @@ export default function App() {
         }
         setConfig(data);
         setModel(data.defaultModel);
+        setSearchMode(data.search.defaultMode || (data.search.enabled ? 'auto' : 'off'));
       } catch (error) {
         if (!controller.signal.aborted) setConfigError(error.message);
       }
@@ -101,9 +115,9 @@ export default function App() {
   }, []);
   useLayoutEffect(() => {
     // Reveal a newly submitted turn once; streamed text must not move the reader.
-    if (latestTurnId && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (revealTurn && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     updateLatestVisibility();
-  }, [latestTurnId, updateLatestVisibility]);
+  }, [revealTurn, updateLatestVisibility]);
   useEffect(updateLatestVisibility, [messages, updateLatestVisibility]);
   useEffect(() => {
     const observer = new ResizeObserver(updateLatestVisibility);
@@ -117,27 +131,41 @@ export default function App() {
     }
   }, [input]);
 
-  const updateMessage = (id, patch) => setMessages((current) => current.map((message) => message.id === id ? { ...message, ...patch } : message));
+  const updateMessage = (id, patch) => setConversation((current) => updateResponse(current, id, patch));
 
-  async function sendTurn(text, retry = false) {
+  async function sendTurn(text, retryId = null) {
     if (abortRef.current || !config || !text.trim()) return;
-    const base = retry ? messages.slice(0, -2) : messages;
-    const useSearch = webSearch;
+    const retryAnswer = retryId ? messages.find((message) => message.id === retryId) : null;
+    const questionIndex = retryAnswer ? messages.findIndex((message) => message.id === retryAnswer.parentId) : -1;
+    if (retryId && questionIndex < 0) {
+      setNotice('That response is no longer on the selected branch.');
+      return;
+    }
+    const base = retryId ? messages.slice(0, questionIndex) : messages;
     const history = [...completedHistory(base), { role: 'user', content: text.trim() }];
     if (history.length > config.limits.maxMessages || history.reduce((size, message) => size + message.content.length, 0) > config.limits.maxContextLength) {
       setNotice('This conversation has reached its context limit. Start a new chat to continue.');
       return;
     }
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const user = { id: crypto.randomUUID(), role: 'user', content: text.trim(), webSearch: useSearch };
+    const user = retryId ? messages[questionIndex] : { id: crypto.randomUUID(), role: 'user', content: text.trim() };
     const answer = {
       id: crypto.randomUUID(), role: 'assistant', content: '', model: activeModel?.label || model,
-      status: 'pending', stage: useSearch ? 'Preparing a search...' : 'Generating a response...',
-      webSearch: useSearch, sources: []
+      status: 'pending', stage: searchMode === 'auto' ? 'Checking whether web search is needed...' : searchMode === 'on' ? 'Preparing a search...' : 'Generating a response...',
+      searchMode, webSearch: false, sources: []
     };
-    setMessages([...base, user, answer]);
-    if (!retry) setInput('');
+    try {
+      const next = retryId
+        ? appendResponse(conversation, user.id, answer)
+        : appendTurn(conversation, messages.at(-1)?.id ?? null, user, answer);
+      setConversation(next);
+    } catch (error) {
+      setNotice(error.message);
+      return;
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setRevealTurn((value) => value + 1);
+    if (!retryId) setInput('');
     setBusy(true);
     setNotice('');
     let content = '';
@@ -146,11 +174,12 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ messages: history, model, mode, webSearch: useSearch })
+        body: JSON.stringify({ messages: history, model, mode, searchMode })
       });
       await consumeStream(response, (event) => {
         if (event.type === 'status') updateMessage(answer.id, { stage: event.message });
-        if (event.type === 'sources') updateMessage(answer.id, { sources: event.sources, searchQuery: event.query });
+        if (event.type === 'web') updateMessage(answer.id, { webDecision: event.action });
+        if (event.type === 'sources') updateMessage(answer.id, { sources: event.sources, searchQuery: event.query, webSearch: true });
         if (typeof event.content === 'string') {
           content += event.content;
           updateMessage(answer.id, { content, status: 'streaming', stage: 'Writing your answer...' });
@@ -171,11 +200,21 @@ export default function App() {
   }
 
   function newChat() {
-    if (messages.length && !window.confirm('Clear this conversation and start a new one?')) return;
-    setMessages([]);
+    if (messages.length && !window.confirm('Clear this conversation and all its response versions?')) return;
+    setConversation(emptyConversation());
+    setRevealTurn(0);
     setInput('');
     setNotice('New chat started.');
     inputRef.current?.focus();
+  }
+
+  function chooseVersion(answer, direction) {
+    if (abortRef.current) return;
+    const versions = responseVersions(conversation, answer.parentId);
+    const index = versions.findIndex((version) => version.id === answer.id) + direction;
+    if (!versions[index]) return;
+    setConversation(selectResponse(conversation, versions[index].id));
+    setNotice(`Response ${index + 1} of ${versions.length} selected. Follow-ups use this branch.`);
   }
 
   async function copy(text) {
@@ -192,7 +231,7 @@ export default function App() {
       <a className="skip-link" href="#chat-input">Skip to message</a>
       <main className="main-panel">
         <header className="topbar">
-          <h1 className="brand">챗자피티</h1>
+          <h1 className="brand"><BrandMark className="brand-mark" /><span className="brand-wordmark">챗자피티</span></h1>
           <div className="model-control">
             <label htmlFor="chat-model" className="sr-only">Your model</label>
             <select id="chat-model" value={model} onChange={(event) => setModel(event.target.value)} disabled={busy || !config}>
@@ -214,10 +253,13 @@ export default function App() {
               <div className="empty-state"><p>Type a message to start.</p></div>
             ) : (
               <section className="messages" role="log" aria-label="Conversation" aria-live="off">
-                {messages.map((message, index) => (
-                  <article key={message.id} className={`message message-${message.role}`} aria-label={message.role === 'user' ? 'Your message' : `${message.model} response`}>
+                {messages.map((message) => {
+                  const versions = message.role === 'assistant' ? responseVersions(conversation, message.parentId) : [];
+                  const versionIndex = versions.findIndex((version) => version.id === message.id);
+                  return (
+                  <article key={`${message.role}:${message.role === 'assistant' ? message.parentId : message.id}`} className={`message message-${message.role}`} aria-label={message.role === 'user' ? 'Your message' : `${message.model} response`}>
                     <div className="message-label">{message.role === 'user' ? 'You' : <><span className="assistant-mark"><Icon name="spark" width="15" height="15" /></span>{message.model}</>}
-                      {message.role === 'user' && message.webSearch && <span className="search-label"><Icon name="globe" width="12" height="12" />Web search</span>}
+                      {message.role === 'assistant' && <span className="search-label"><Icon name="globe" width="12" height="12" />Web {message.searchMode}</span>}
                     </div>
                     {message.role === 'user' ? <div className="user-text">{message.content}</div> : <>
                       {message.sources.length > 0 && <details className="sources">
@@ -232,12 +274,18 @@ export default function App() {
                       {message.status === 'stopped' && <p className="stopped">Response stopped{message.content ? ' — partial answer kept.' : '.'}</p>}
                       {['complete', 'error', 'stopped'].includes(message.status) && <div className="message-actions">
                         {message.content && <button onClick={() => copy(message.content)}><Icon name="copy" width="14" height="14" />Copy</button>}
-                        {index === messages.length - 1 && !busy && <button onClick={() => sendTurn(messages.at(-2).content, true)}><Icon name="retry" width="14" height="14" />Try again</button>}
-                        {message.status === 'complete' && <span><Icon name="check" width="13" height="13" />{message.webSearch ? 'Web-assisted answer' : 'Answer complete'}</span>}
+                        <button disabled={busy} onClick={() => sendTurn(conversation.nodes.find((node) => node.id === message.parentId).content, message.id)}><Icon name="retry" width="14" height="14" />Try again</button>
+                        {versions.length > 1 && <div className="version-control" role="group" aria-label="Response versions">
+                          <button disabled={busy || versionIndex === 0} onClick={() => chooseVersion(message, -1)} aria-label="Previous response" title="Previous response"><Icon name="previous" width="14" height="14" /></button>
+                          <span aria-live="polite">{versionIndex + 1} of {versions.length}</span>
+                          <button disabled={busy || versionIndex === versions.length - 1} onClick={() => chooseVersion(message, 1)} aria-label="Next response" title="Next response"><Icon name="next" width="14" height="14" /></button>
+                        </div>}
+                        {message.status === 'complete' && <span><Icon name="check" width="13" height="13" />{message.webSearch ? 'Web-assisted answer' : message.searchMode === 'auto' ? 'Answered without web' : 'Answer complete'}</span>}
                       </div>}
                     </>}
                   </article>
-                ))}
+                  );
+                })}
               </section>
             )}
           </div>
@@ -264,9 +312,15 @@ export default function App() {
             />
             <div className="composer-controls">
               <div className="composer-options">
-                <button type="button" className={`search-toggle ${webSearch ? 'active' : ''}`} aria-pressed={webSearch} aria-describedby="composer-help" disabled={busy || !config?.search.enabled} onClick={() => setWebSearch(!webSearch)}>
-                  <Icon name="globe" width="16" height="16" />Search web<span className="toggle-track" />
-                </button>
+                <div className={`web-control ${searchMode !== 'off' ? 'active' : ''}`}>
+                  <Icon name="globe" width="16" height="16" />
+                  <label htmlFor="web-mode">Web</label>
+                  <select id="web-mode" aria-label="Web search" aria-describedby="composer-help" value={searchMode} disabled={busy || !config} onChange={(event) => setSearchMode(event.target.value)}>
+                    <option value="off">Off</option>
+                    <option value="auto" disabled={!config?.search.enabled}>Auto</option>
+                    <option value="on" disabled={!config?.search.enabled}>On</option>
+                  </select>
+                </div>
                 <div className="tone-control">
                   <label className="sr-only" htmlFor="chat-tone">Response tone</label>
                   <select id="chat-tone" value={mode} onChange={(event) => setMode(event.target.value)} disabled={busy || activeModel?.supportsSarcastic === false} title={activeModel?.supportsSarcastic === false ? 'This model uses the standard tone.' : 'Response tone'}>
@@ -282,7 +336,7 @@ export default function App() {
             </div>
           </form>
           <div className="composer-help" id="composer-help">
-            <span>{webSearch ? 'Search terms from this chat are sent to Tavily.' : 'AI can make mistakes. Check important answers.'}</span>
+            <span>{searchMode === 'off' ? 'Web is off. AI can make mistakes.' : searchMode === 'auto' ? 'Auto may send relevant search terms to Tavily.' : 'Web is on. Search terms are sent to Tavily.'}</span>
             <span className="keyboard-hint">Enter to send · Shift + Enter for a new line</span>
           </div>
           <div className="live-notice" role="status" aria-live="polite">{notice || (busy ? 'Generating your response...' : 'Reloading clears this chat.')}</div>

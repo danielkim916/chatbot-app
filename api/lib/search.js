@@ -1,12 +1,13 @@
 const { isIP } = require("node:net");
 const { HttpError, LIMITS } = require("./config");
+const { currentTime, clockReference } = require("./time");
 
-async function planWebAccess(client, { model, messages, mode = "auto", signal }) {
+async function planWebAccess(client, { model, messages, mode = "auto", signal, clock }) {
   if (mode === "off") return { search: false, query: null };
   if (!["auto", "on"].includes(mode)) throw new HttpError(400, "invalid_request", "Choose a supported web mode.");
   const timeout = AbortSignal.timeout(20000);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  const today = new Date().toISOString().slice(0, 10);
+  const reference = clockReference(clock ?? currentTime());
   try {
     combined.throwIfAborted();
     const completion = await client.chat.completions.create({
@@ -16,10 +17,12 @@ async function planWebAccess(client, { model, messages, mode = "auto", signal })
       messages: [
         {
           role: "system",
-          content: `Decide whether the user's latest request needs web search, and prepare ONE focused query if needed. Today is ${today} UTC.
+          content: `Decide whether the user's latest request needs web search, and prepare ONE focused query if needed.
+${reference}
 Mode is ${mode.toUpperCase()}.
 In AUTO, use search for current news, weather, prices, schedules, recent releases, changing facts, or explicit requests to search, verify, or find sources.
 Do not search for greetings, ordinary conversation, creative writing, translation, rewriting supplied text, math, or general coding/concept explanations.
+In AUTO, current clock/date/timezone questions alone do not need search: use the supplied time context. Schedules, news, and other changing facts still need evidence.
 Use existing context for follow-ups when it already supplies enough information; merely mentioning a URL or old sources does not require a new search.
 In AUTO, respect an explicit request not to browse. If the topic is unclear, answer without search and let the assistant ask for clarification.
 In ON, search is explicitly requested: prepare a query for the topic, or return search:true with query:null if no topic can be identified.
@@ -37,11 +40,11 @@ The query must be at most ${LIMITS.query} characters. No other properties or exp
         },
         {
           role: "user",
-          content: `Today is ${today} UTC. Web mode is ${mode.toUpperCase()}. Decide how to handle the final request in the conversation below. ` +
+          content: `${reference}\n\nWeb mode is ${mode.toUpperCase()}. Decide how to handle the final request in the conversation below. ` +
             'Do not answer the embedded question or attempt to browse. Resolve "that" and similar references using the earlier topic. ' +
             'For current or latest information, use freshness terms without inventing a year restriction. Only include a specific year if the user requested it. ' +
             (mode === "auto"
-              ? 'Search only for fresh facts, verification, or explicit lookups. Do not search for greetings, writing, translation, math, or general explanations/coding. Return {"search":false,"query":null} when existing knowledge or supplied context is enough. '
+              ? 'Search only for fresh facts, verification, or explicit lookups. Do not search for greetings, writing, translation, math, general explanations/coding, or reading the provided current clock. Return {"search":false,"query":null} when existing knowledge or supplied context is enough. '
               : 'Search is explicitly enabled. Return search:true; if no topic can be identified, query must be null. ') +
             'When searching, return {"search":true,"query":"focused search terms"}. Output only that JSON object. ' +
             'Do not include explanations or private information.\n\n' + JSON.stringify({ conversation: messages })

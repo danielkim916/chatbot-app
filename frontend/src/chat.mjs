@@ -1,15 +1,19 @@
+export function answerWithSources(answer) {
+  const content = answer.content.replace(/\]\(source:(\d+)\)/g, (match, id) => {
+    const url = safeLink(answer.sources?.find((source) => source.id === Number(id))?.url);
+    return url ? `](${url})` : match;
+  });
+  const sources = (answer.sources || []).filter((source) => safeLink(source.url));
+  const references = sources.length ? '\n\nSources for this response:\n' + sources.map((source) => `[${source.id}] ${source.url}`).join('\n') : '';
+  return content + references;
+}
+
 export function completedHistory(messages) {
   const history = [];
   for (let i = 0; i + 1 < messages.length; i += 2) {
     const [question, answer] = [messages[i], messages[i + 1]];
     if (question.role === 'user' && answer.role === 'assistant' && answer.status === 'complete') {
-      const content = answer.content.replace(/\]\(source:(\d+)\)/g, (match, id) => {
-        const url = safeLink(answer.sources?.find((source) => source.id === Number(id))?.url);
-        return url ? `](${url})` : match;
-      });
-      const sources = (answer.sources || []).filter((source) => safeLink(source.url));
-      const references = sources.length ? '\n\nSources for this response:\n' + sources.map((source) => `[${source.id}] ${source.url}`).join('\n') : '';
-      history.push({ role: 'user', content: question.content }, { role: 'assistant', content: content + references });
+      history.push({ role: 'user', content: question.content }, { role: 'assistant', content: answerWithSources(answer) });
     }
   }
   return history;

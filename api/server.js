@@ -6,8 +6,9 @@ const path = require("node:path");
 const { HttpError, readConfig, validateChat, systemPrompt, LIMITS } = require("./lib/config");
 const { UsageLimits } = require("./lib/limits");
 const { searchWeb, planWebAccess } = require("./lib/search");
+const { currentTime, clockReference } = require("./lib/time");
 
-function createApp(config, { client, limits, search = searchWeb, logger = console } = {}) {
+function createApp(config, { client, limits, search = searchWeb, logger = console, now = () => new Date() } = {}) {
   client ||= new OpenAI({ baseURL: config.endpoint, apiKey: config.apiKey, maxRetries: 0 });
   limits ||= new UsageLimits(config);
   const app = express();
@@ -82,7 +83,8 @@ function createApp(config, { client, limits, search = searchWeb, logger = consol
         if (input.searchMode !== "off") {
           await send({ type: "status", stage: "planning", message: input.searchMode === "auto" ? "Checking whether web search is needed..." : "Preparing a search..." });
           decision = await planWebAccess(client, {
-            model: input.model, messages: input.messages, mode: input.searchMode, signal: controller.signal
+            model: input.model, messages: input.messages, mode: input.searchMode, signal: controller.signal,
+            clock: currentTime(input.timeZone, now())
           });
         }
         await send({ type: "web", mode: input.searchMode, action: decision.search ? "search" : "answer" });
@@ -98,8 +100,12 @@ function createApp(config, { client, limits, search = searchWeb, logger = consol
           });
         }
         await send({ type: "status", stage: "thinking", message: "Generating a response..." });
-        const messages = [{ role: "system", content: systemPrompt(input.mode, decision.search) }];
+        const clock = currentTime(input.timeZone, now());
+        await send({ type: "clock", clock });
+        const messages = [{ role: "system", content: systemPrompt(input.mode, decision.search, clock) }];
         messages.push(...input.messages);
+        const question = messages.at(-1);
+        messages[messages.length - 1] = { ...question, content: `${clockReference(clock)}\n\n${question.content}` };
         if (input.mode === "sarcastic") {
           // Keep earlier polite replies from overriding this turn's chosen voice.
           const last = messages.at(-1);

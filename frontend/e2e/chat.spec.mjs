@@ -97,8 +97,11 @@ test('web search cites actual sources without rendering injected HTML, images or
   expect(requests[0].searchQuery).toBeUndefined();
   expect(requests[0].searchMode).toBe('on');
   await page.locator('.sources summary').click();
-  await expect(page.getByRole('link', { name: 'Fetch API - MDN', exact: false })).toBeVisible();
+  await expect(page.locator('.sources').getByRole('link', { name: 'Fetch API - MDN', exact: false })).toBeVisible();
   await expect(page.locator('.answer-text a')).toHaveCount(2);
+  await expect(page.locator('.answer-text sup.citation')).toHaveCount(2);
+  await expect(page.locator('.answer-text sup.citation').first()).toHaveCSS('vertical-align', 'super');
+  await expect(page.locator('.answer-text sup.citation').first().getByRole('link')).toHaveAccessibleName('Source 1: Fetch API - MDN');
   await expect(page.locator('.answer-text a').first()).toHaveAttribute('href', 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API');
   await expect(page.locator('.answer-text a').last()).toHaveAttribute('href', 'https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API');
   await expect(page.locator('.answer-text code')).toHaveText('array[1]');

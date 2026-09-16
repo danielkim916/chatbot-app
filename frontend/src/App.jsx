@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { completedHistory, consumeStream, remarkCitations, safeLink } from './chat.mjs';
+import { answerWithSources, completedHistory, consumeStream, remarkCitations, safeLink } from './chat.mjs';
 import { appendResponse, appendTurn, emptyConversation, responseVersions, selectResponse, updateResponse, visibleMessages } from './conversation.mjs';
 
 function Icon({ name, ...props }) {
@@ -33,8 +33,37 @@ function BrandMark({ className = '' }) {
   </svg>;
 }
 
-function Answer({ message }) {
+function CodeBlock({ children, onCopy }) {
+  const preRef = useRef(null);
+  const code = React.Children.toArray(children).find(React.isValidElement);
+  const language = typeof code?.props.className === 'string' ? code.props.className.match(/language-([\w+-]+)/)?.[1] : null;
+  return <div className="code-block">
+    <div className="code-toolbar">
+      <span>{language || 'Code'}</span>
+      <button type="button" onClick={() => onCopy(preRef.current.textContent, 'Code')} aria-label="Copy code"><Icon name="copy" width="13" height="13" />Copy code</button>
+    </div>
+    <pre ref={preRef}>{children}</pre>
+  </div>;
+}
+
+function Answer({ message, onCopy }) {
   const sources = message.sources || [];
+  const components = useMemo(() => ({
+    a: ({ href, children }) => {
+      if (!href) return <span>{children}</span>;
+      const parts = React.Children.toArray(children);
+      const numeric = parts.every((part) => typeof part === 'string' || typeof part === 'number') &&
+        /^(?:\d{1,2}|\[\d{1,2}\])$/.test(parts.join('').trim());
+      const source = numeric && sources.find((item) => safeLink(item.url) === href);
+      if (source) return <sup className="citation">
+        <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"
+          aria-label={`Source ${source.id}: ${source.title}`} title={`${source.title} — ${source.domain}`}>{source.id}</a>
+      </sup>;
+      return <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{children}</a>;
+    },
+    pre: ({ children }) => <CodeBlock onCopy={onCopy}>{children}</CodeBlock>,
+    table: ({ children }) => <div className="table-scroll"><table>{children}</table></div>
+  }), [sources, onCopy]);
   const transform = (url) => {
     const citation = /^source:(\d+)$/.exec(url);
     if (citation) return safeLink(sources.find((source) => source.id === Number(citation[1]))?.url);
@@ -46,12 +75,7 @@ function Answer({ message }) {
     skipHtml
     disallowedElements={['img']}
     urlTransform={transform}
-    components={{
-      a: ({ href, children }) => href
-        ? <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{children}</a>
-        : <span>{children}</span>,
-      table: ({ children }) => <div className="table-scroll"><table>{children}</table></div>
-    }}
+    components={components}
   >{message.content}</Markdown>;
 }
 
@@ -174,11 +198,15 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ messages: history, model, mode, searchMode })
+        body: JSON.stringify({
+          messages: history, model, mode, searchMode,
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        })
       });
       await consumeStream(response, (event) => {
         if (event.type === 'status') updateMessage(answer.id, { stage: event.message });
         if (event.type === 'web') updateMessage(answer.id, { webDecision: event.action });
+        if (event.type === 'clock') updateMessage(answer.id, { clock: event.clock });
         if (event.type === 'sources') updateMessage(answer.id, { sources: event.sources, searchQuery: event.query, webSearch: true });
         if (typeof event.content === 'string') {
           content += event.content;
@@ -217,14 +245,14 @@ export default function App() {
     setNotice(`Response ${index + 1} of ${versions.length} selected. Follow-ups use this branch.`);
   }
 
-  async function copy(text) {
+  const copy = useCallback(async (text, label = 'Answer') => {
     try {
       await navigator.clipboard.writeText(text);
-      setNotice('Answer copied.');
+      setNotice(`${label} copied.`);
     } catch {
       setNotice('Clipboard access is unavailable. Select the text to copy it manually.');
     }
-  }
+  }, []);
 
   return (
     <div className="workspace">
@@ -268,12 +296,12 @@ export default function App() {
                           <span className="source-number">{source.id}</span><span><strong>{source.title}</strong><small>{source.domain}</small></span><Icon name="link" width="14" height="14" />
                         </a></li>)}</ol>
                       </details>}
-                      <div className="answer-text"><Answer message={message} /></div>
+                      <div className="answer-text"><Answer message={message} onCopy={copy} /></div>
                       {['pending', 'streaming'].includes(message.status) && <div className="generation-status"><span className="pulse-dot" />{message.stage}</div>}
                       {message.status === 'error' && <div className="response-error" role="alert">{message.error}</div>}
                       {message.status === 'stopped' && <p className="stopped">Response stopped{message.content ? ' — partial answer kept.' : '.'}</p>}
                       {['complete', 'error', 'stopped'].includes(message.status) && <div className="message-actions">
-                        {message.content && <button onClick={() => copy(message.content)}><Icon name="copy" width="14" height="14" />Copy</button>}
+                        {message.content && <button onClick={() => copy(answerWithSources(message))}><Icon name="copy" width="14" height="14" />Copy</button>}
                         <button disabled={busy} onClick={() => sendTurn(conversation.nodes.find((node) => node.id === message.parentId).content, message.id)}><Icon name="retry" width="14" height="14" />Try again</button>
                         {versions.length > 1 && <div className="version-control" role="group" aria-label="Response versions">
                           <button disabled={busy || versionIndex === 0} onClick={() => chooseVersion(message, -1)} aria-label="Previous response" title="Previous response"><Icon name="previous" width="14" height="14" /></button>

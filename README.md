@@ -7,7 +7,8 @@
 - Choose GPT 5.6 Sol (default), Terra, Luna, or Claude Opus 4.8, in that order.
 - Choose **Web Off / Auto / On**. Auto is the default: the selected model decides whether fresh evidence is needed, then plans at most one query. Off skips routing and search; On explicitly requests a search.
 - Use **Standard** or **Sarcastic** tone. Sarcastic is a weary, competent office veteran with dry observations and mock reluctance, rather than cheerful customer support. The voice is reasserted for each answer without influencing the search planner. Claude retains its existing Standard-only setting.
-- View numbered sources, stream Markdown, stop a response, retry with different settings, or copy an answer.
+- View superscript source citations with source-name tooltips and accessible labels. Copy an individual code block without Markdown fences, or copy the answer with usable source URLs.
+- Get current date/time answers using a fresh server clock and the browser's timezone, including daylight-saving offsets.
 - **Try again** adds a response version instead of overwriting one. Previous/next arrows select 1 of 2, 2 of 2, and so on. Each version keeps its model, web setting, source list, and follow-up branch.
 - Use the compact header with a custom speech-bubble mark, Korean display wordmark, model selector, new-chat button, and light/dark switch. There is no sidebar, promotional copy, or conversation export.
 - Read freely while responses stream. The page reveals each new turn once, then preserves your scroll position and focus. **Latest** jumps down once; it does not enable automatic following.
@@ -28,6 +29,14 @@ Regenerating any response creates a sibling under the same question and selects 
 Changing versions makes no API calls. Generating a version uses the currently selected model, tone, and web setting. Failed or stopped attempts are retained for inspection; earlier successful versions remain available. Branch controls are disabled during generation to avoid changing context mid-request.
 
 The browser stores at most 200 message nodes and approximately two million text characters, reserving room for the next answer. Reaching that limit shows an explicit new-chat notice; old versions are not silently removed. Backend per-request context limits still apply to the selected path.
+
+## Current time and timezone
+
+Every request includes the browser's current IANA timezone preference, such as `Asia/Seoul` or `America/New_York`. The server validates and canonicalizes it; clients that omit `timeZone` use UTC. A timezone preference is not verified physical location, and no geolocation lookup is performed.
+
+The API derives full UTC and local timestamps, UTC offset, local date, and weekday from the server clock. It supplies them to routing and refreshes the snapshot again immediately before answer generation, so a slow lookup does not freeze the earlier timestamp. Both the system prompt and current-turn context contain the reference for provider compatibility. Daylight-saving transitions and fractional offsets are handled by the runtime's timezone database.
+
+Client-supplied timestamps are not trusted. Old response versions retain their original answer; a new request or regeneration gets fresh time context. This is a generation-time snapshot, not a continuously ticking clock. In Auto, questions about the current clock alone do not need a web search; other time-sensitive facts such as news and schedules still may.
 
 ## Run locally
 
@@ -83,7 +92,7 @@ The example LiteLLM mappings in `deploy/litellm.example.yaml` document the curre
 2. In Auto, the selected model decides whether current evidence or an explicit lookup is needed. Greetings, creative writing, translation, math, ordinary coding explanations, and sufficient supplied context normally do not need search. Current news, changing facts, verification and explicit source requests do. The decision is not infallible; Off and On provide user overrides.
 3. The model receives only the selected conversation path and returns `{"search":false,"query":null}` or `{"search":true,"query":"..."}`. For example, "search that for the latest" after discussing the James Webb Space Telescope should produce a telescope-news query. The server enforces the mode, validates a single query of at most 400 characters, and rejects extra actions, malformed output, and control characters. It never falls back to blindly searching the latest message. Client-provided `searchQuery` fields are ignored.
 4. Only the planned query goes to the fixed `https://api.tavily.com/search` endpoint with `X-Tavily-Access-Mode: keyless`. Up to five valid, deduplicated public source URLs and 1,800-character snippets per source are accepted. The total upstream response is limited to 1 MiB. No redirects, arbitrary fetch endpoint, images, crawling, or extraction are enabled.
-5. The server sends structured, explicitly untrusted reference data to the chosen model through LiteLLM. The system prompt requests `[1](source:1)` citations; the browser also accepts plain `[1]` markers outside code/links, resolving only IDs of actual retrieved sources. Follow-up context retains source URLs, and the source panel identifies the planned query.
+5. The server sends structured, explicitly untrusted reference data to the chosen model through LiteLLM. The system prompt requests `[1](source:1)` citations; the browser also accepts plain `[1]` markers outside code/links. Numeric links to known retrieved sources render as superscripts with the source title and accessible source labels; ordinary text links and code remain unchanged. Follow-up context and copied answers retain real source URLs, and the source panel identifies the planned query.
 6. The UI distinguishes answers with retrieved sources from answers without web access. Failure, exhaustion, empty results, or timeout produces a visible error, not a silent fallback pretending to have researched an answer. Choose Off for an ordinary answer. Stopping cancels routing, search, or answer generation as appropriate.
 
 [Tavily keyless access](https://docs.tavily.com/documentation/keyless) requires no account/key but is rate-limited with no documented numeric allowance or availability guarantee. The site's 80/day cap is **our** cap, not a promised provider allocation. In Auto or On, generated queries may contain terms from earlier turns on the selected branch and are disclosed to Tavily; the full conversation stays with the existing model provider, not the search provider. The planner is instructed to omit unnecessary private information, but this is not guaranteed anonymization. **Choose Off for confidential discussions.**
@@ -151,13 +160,14 @@ journalctl -u chatbot-api --since '10 minutes ago' --no-pager
   "messages": [{"role": "user", "content": "Explain the Fetch API."}],
   "model": "gpt-5.6-sol",
   "mode": "standard",
-  "searchMode": "auto"
+  "searchMode": "auto",
+  "timeZone": "Asia/Seoul"
 }
 ```
 
 `searchMode` accepts `off`, `auto`, or `on`; missing options default to Auto when search is enabled, otherwise Off. For older clients, `webSearch: true/false` maps to On/Off. Supplying both fields is rejected.
 
-The SSE stream emits `meta`, `status` (`planning`, `searching`, `thinking`), `web` (the decision's `mode` and `action: "search" | "answer"`), and `sources` (including the planned `query`) objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. A web decision is not a claim that retrieval succeeded; source metadata is emitted only after successful retrieval. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
+The SSE stream emits `meta`, `status` (`planning`, `searching`, `thinking`), `web` (the decision's `mode` and `action: "search" | "answer"`), `sources` (including the planned `query`), and `clock` (the answer-generation time reference) objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. A web decision is not a claim that retrieval succeeded; source metadata is emitted only after successful retrieval. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
 
 ```bash
 npm test --prefix api
@@ -167,7 +177,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Node tests exercise mode validation, independent persistent quotas, context-aware routing, fixed search endpoints, data bounds, stream errors, cancellation, and branch isolation. Playwright uses mocked APIs and incremental streams for desktop/mobile checks, including nested branch restoration and preserved reading position, without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
+Node tests exercise mode/timezone validation, clock refreshes, DST/date boundaries, independent persistent quotas, context-aware routing, fixed search endpoints, data bounds, stream errors, cancellation, and branch isolation. Playwright uses mocked APIs and incremental streams for desktop/mobile checks, including nested branch restoration, preserved reading position, superscript citations, and clipboard behavior, without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
 
 ## Brand assets and license
 

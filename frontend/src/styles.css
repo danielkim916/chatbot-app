@@ -87,10 +87,19 @@ svg { flex-shrink: 0; vertical-align: middle; }
 .answer-text li { margin: .3em 0; }
 .answer-text ul, .answer-text ol { padding-left: 1.5em; }
 .answer-text a { text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.answer-text .citation { font-size: .72em; line-height: 0; vertical-align: super; margin-inline: .08em; }
+.answer-text .citation a { font-weight: 650; text-decoration: none; padding-inline: .08em; }
+.answer-text .citation a:hover { text-decoration: underline; }
 .answer-text blockquote { border-left: 3px solid var(--accent); padding-left: 18px; margin-left: 0; color: var(--muted); }
 .answer-text code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .85em; background: var(--soft); padding: 3px 6px; border-radius: 4px; }
 .answer-text pre { overflow-x: auto; max-width: 100%; background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 18px; line-height: 1.6; white-space: pre; }
 .answer-text pre code { background: transparent; padding: 0; border-radius: 0; }
+.code-block { margin: 1em 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--soft); }
+.code-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.4; }
+.code-toolbar > span { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-toolbar button { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; padding: 3px 0; background: transparent; color: inherit; font-size: 11px; }
+.code-toolbar button:hover { color: var(--accent); }
+.answer-text .code-block pre { margin: 0; border: 0; border-radius: 0; background: transparent; }
 .answer-text hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 .table-scroll { overflow-x: auto; margin: 16px 0; }
 .answer-text table { border-collapse: collapse; font-size: 13px; width: 100%; }

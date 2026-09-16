@@ -28,7 +28,8 @@ test("Auto receives the chosen conversation and conservative routing instruction
     assert.match(request.messages[0].content, /Do not search for greetings/);
     assert.match(request.messages[1].content, /Web mode is AUTO/);
     assert.match(request.messages[1].content, /Do not answer the embedded question/);
-    assert.match(request.messages[1].content, /Today is \d{4}-\d{2}-\d{2} UTC/);
+    assert.match(request.messages[1].content, /UTC now: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    assert.match(request.messages[1].content, /reading the provided current clock/);
     assert.ok(request.messages[1].content.endsWith(JSON.stringify({ conversation: messages })));
     assert.ok(options.signal instanceof AbortSignal);
   });

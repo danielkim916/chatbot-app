@@ -9,22 +9,22 @@ model_list:
       extra_headers:
         editor-version: "vscode/1.112.0"
         editor-plugin-version: "copilot-chat/1.0.11"
-  - model_name: gpt-5.6-luna
-    model_info:
-      mode: responses
-      supports_vision: true
-    litellm_params:
-      model: github_copilot/gpt-5.6-luna
-      drop_params: true
-      extra_headers:
-        editor-version: "vscode/1.112.0"
-        editor-plugin-version: "copilot-chat/1.0.11"
   - model_name: gpt-5.6-terra
     model_info:
       mode: responses
       supports_vision: true
     litellm_params:
       model: github_copilot/gpt-5.6-terra
+      drop_params: true
+      extra_headers:
+        editor-version: "vscode/1.112.0"
+        editor-plugin-version: "copilot-chat/1.0.11"
+  - model_name: gpt-5.6-luna
+    model_info:
+      mode: responses
+      supports_vision: true
+    litellm_params:
+      model: github_copilot/gpt-5.6-luna
       drop_params: true
       extra_headers:
         editor-version: "vscode/1.112.0"

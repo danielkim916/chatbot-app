@@ -3,12 +3,12 @@ import { test, expect } from '@playwright/test';
 const configuration = {
   availableModels: [
     { label: 'GPT 5.6 Sol', value: 'gpt-5.6-sol', supportsSarcastic: true },
-    { label: 'GPT 5.6 Luna', value: 'gpt-5.6-luna', supportsSarcastic: true },
     { label: 'GPT 5.6 Terra', value: 'gpt-5.6-terra', supportsSarcastic: true },
+    { label: 'GPT 5.6 Luna', value: 'gpt-5.6-luna', supportsSarcastic: true },
     { label: 'Claude Opus 4.8', value: 'claude-opus-4.8', supportsSarcastic: false }
   ],
   defaultModel: 'gpt-5.6-sol',
-  search: { enabled: true, maxQueryLength: 400, maxResults: 5 },
+  search: { enabled: true, maxResults: 5 },
   limits: { maxMessageLength: 12000, maxMessages: 40, maxContextLength: 48000 }
 };
 const sse = (events) => events.map((event) => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
@@ -27,17 +27,22 @@ async function setup(page, reply) {
   return { requests, errors };
 }
 
-test('welcome, model selection, theme and mobile layout', async ({ page }, testInfo) => {
+test('compact branding, model order, tone and theme without the extra interface', async ({ page }, testInfo) => {
   const { errors } = await setup(page, (route) => route.fulfill({ contentType: 'text/event-stream', body: sse([{ content: 'OK' }, '[DONE]']) }));
-  await expect(page.getByRole('heading', { name: 'Think it through. Look it up.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '챗자피티', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('챗자피티');
+  await expect(page.locator('aside')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /download/i })).toHaveCount(0);
+  await expect(page.getByText(/reimagined|a clearer way|powered by|space for curiosity|download to keep/i)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Search web' })).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.getByLabel('Your model').locator('option')).toHaveCount(4);
+  await expect(page.getByLabel('Your model').locator('option')).toHaveText(['GPT 5.6 Sol', 'GPT 5.6 Terra', 'GPT 5.6 Luna', 'Claude Opus 4.8']);
+  await expect(page.getByLabel('Response tone').locator('option')).toHaveText(['Standard', 'Sarcastic']);
   await page.getByLabel('Your model').selectOption('claude-opus-4.8');
   await expect(page.getByLabel('Response tone')).toBeDisabled();
   await page.getByLabel('Your model').selectOption('gpt-5.6-sol');
   await expect(page.getByLabel('Response tone')).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('welcome.png'), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('empty.png'), fullPage: true });
   await page.getByRole('button', { name: 'Switch to dark theme' }).filter({ visible: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({ path: testInfo.outputPath('dark.png'), fullPage: true });
@@ -73,13 +78,16 @@ test('web search cites actual sources without rendering injected HTML, images or
       '[DONE]'
     ])
   }));
+  const before = await page.locator('.composer').boundingBox();
   await page.getByRole('button', { name: 'Search web' }).click();
-  await expect(page.getByText(/Your query, or the first 400 characters/)).toBeVisible();
-  await page.getByLabel('Search query (optional)').fill('MDN fetch docs');
+  await expect(page.getByText('Search terms from this chat are sent to Tavily.')).toBeVisible();
+  await expect(page.getByRole('textbox')).toHaveCount(1);
+  const after = await page.locator('.composer').boundingBox();
+  expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(1);
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Explain fetch');
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect(page.getByText('Web-assisted answer', { exact: true })).toBeVisible();
-  expect(requests[0].searchQuery).toBe('MDN fetch docs');
+  expect(requests[0].searchQuery).toBeUndefined();
   expect(requests[0].webSearch).toBe(true);
   await page.locator('.sources summary').click();
   await expect(page.getByRole('link', { name: 'Fetch API - MDN', exact: false })).toBeVisible();
@@ -118,7 +126,7 @@ test('search failures stay explicit, keep partial text and can retry with anothe
   expect(requests[1].webSearch).toBe(false);
 });
 
-test('stop, download and clear controls work without persisting conversation', async ({ page }) => {
+test('stop and new chat work without export or persistent history', async ({ page }) => {
   let held;
   await setup(page, (route) => { held = route; });
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A slow question');
@@ -127,12 +135,59 @@ test('stop, download and clear controls work without persisting conversation', a
   await page.getByRole('button', { name: 'Stop response' }).click();
   await expect(page.getByText('Response stopped.', { exact: true })).toBeVisible();
   if (held) await held.abort();
-  const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Download conversation' }).click();
-  expect((await download).suggestedFilename()).toMatch(/^jawon-chat-.*\.md$/);
   page.on('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'New conversation', exact: true }).filter({ visible: true }).click();
-  await expect(page.getByRole('heading', { name: 'Think it through. Look it up.' })).toBeVisible();
+  await expect(page.getByText('Type a message to start.')).toBeVisible();
+});
+
+test('streaming never pulls the reader down or steals focus, even after jumping to latest', async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (url, options) => {
+      if (url !== '/api/chat' || options?.method !== 'POST') return originalFetch(url, options);
+      const body = new ReadableStream({
+        start(controller) {
+          window.testChatStream = {
+            send(event) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); },
+            finish() { controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n')); controller.close(); }
+          };
+        }
+      });
+      return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }));
+    };
+  });
+  await setup(page, () => { throw new Error('The test stream should handle this request.'); });
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Write a long response');
+  await page.getByRole('button', { name: 'Send message' }).click();
+  await expect(page.getByRole('button', { name: 'Stop response' })).toBeVisible();
+  await page.waitForFunction(() => window.testChatStream);
+  const area = page.getByRole('region', { name: 'Conversation area' });
+  const initialTop = await area.evaluate((element) => element.scrollTop);
+  await page.evaluate(() => window.testChatStream.send({
+    content: Array.from({ length: 45 }, (_, i) => `Paragraph ${i}: Some text for a long, readable response.`).join('\n\n')
+  }));
+  await expect(page.getByText('Paragraph 44:', { exact: false })).toBeAttached();
+  expect(await area.evaluate((element) => element.scrollTop)).toBe(initialTop);
+  await expect(page.getByRole('button', { name: 'Latest', exact: true })).toBeVisible();
+  await area.focus();
+  const chosenTop = await area.evaluate((element) => {
+    element.scrollTop = Math.floor(element.clientHeight * 0.6);
+    return element.scrollTop;
+  });
+  await page.evaluate(() => window.testChatStream.send({ content: '\n\nNewly appended paragraph.' }));
+  await expect(page.getByText('Newly appended paragraph.', { exact: true })).toBeAttached();
+  expect(await area.evaluate((element) => element.scrollTop)).toBe(chosenTop);
+  await page.getByRole('button', { name: 'Latest', exact: true }).click();
+  const jumpedTop = await area.evaluate((element) => element.scrollTop);
+  expect(jumpedTop).toBeGreaterThan(chosenTop);
+  await area.focus();
+  await page.evaluate(() => window.testChatStream.send({ content: '\n\n' + 'More streamed text. '.repeat(120) }));
+  await expect(page.getByText('More streamed text.', { exact: false })).toBeAttached();
+  expect(await area.evaluate((element) => element.scrollTop)).toBe(jumpedTop);
+  await page.evaluate(() => window.testChatStream.finish());
+  await expect(page.getByText('Answer complete', { exact: true })).toBeAttached();
+  await expect(area).toBeFocused();
+  expect(await area.evaluate((element) => element.scrollTop)).toBe(jumpedTop);
 });
 
 test('keyboard handling preserves shift-enter and IME composition', async ({ page }) => {

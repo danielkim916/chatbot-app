@@ -1,14 +1,16 @@
-# Jawon Chat
+# Chatjapiti
 
 [chat.jawon.kim](https://chat.jawon.kim) is a small, multi-model chatbot with streaming answers and opt-in, cited web search. React and an Express API run behind Nginx on an Ubuntu VM. **LiteLLM remains the model gateway.**
 
 ## What it does
 
-- Choose GPT 5.6 Sol (default), Luna, Terra, or Claude Opus 4.8 from a server-configured dropdown.
-- Turn on **Search web** for one bounded, keyless Tavily search per message. An optional search-query field lets you send a focused query instead of your question.
-- View numbered sources, stream Markdown, stop a response, retry with a different model, copy an answer, or download the conversation as Markdown.
-- Use a responsive light/dark interface with keyboard controls, IME-safe input, accessible labels, and reduced-motion support.
-- Keep conversation history in page memory only. Reloading clears it; download before starting a new chat if you want a copy. Only completed turns are sent as subsequent context.
+- Choose GPT 5.6 Sol (default), Terra, Luna, or Claude Opus 4.8, in that order.
+- Turn on **Search web** to let the selected model plan one focused query from the conversation, retrieve keyless Tavily results, then answer with citations. There is no manual query field; search remains explicitly opt-in.
+- Use **Standard** or **Sarcastic** tone. Sarcastic is sassy, dry, and mock-exasperated while still helpful; Claude retains its existing Standard-only setting.
+- View numbered sources, stream Markdown, stop a response, retry with different settings, or copy an answer.
+- Use a compact header, model selector, new-chat button, and light/dark switch. There is no sidebar, promotional copy, or conversation export.
+- Read freely while responses stream. The page reveals each new turn once, then preserves your scroll position and focus. **Latest** jumps down once; it does not enable automatic following.
+- Keep conversation history in page memory only; reloading or starting a new chat clears it. Only completed turns are sent as subsequent context.
 
 ```text
 Browser -> Nginx -> Node API :3001 -> LiteLLM :4000 -> model provider
@@ -55,10 +57,10 @@ Open `http://localhost:3000`. Vite proxies `/api` to `127.0.0.1:3001`. `CHAT_ORI
 | `SEARCH_DAILY_LIMIT` | 80 search-enabled requests per UTC day, shared across the site |
 | `CHAT_PER_MINUTE` | 10 requests per client IP per fixed minute |
 | `CHAT_CONCURRENCY` | 3 globally; at most one in-flight request per IP |
-| `CHAT_TIMEOUT_MS` | 120000; Tavily has a separate 12-second deadline |
+| `CHAT_TIMEOUT_MS` | 120000 overall; query planning has a 20-second deadline and Tavily has a 12-second deadline |
 | `CHAT_STATE_FILE` | `~/.local/state/chatbot-api/budget.json`; systemd uses `/var/lib/chatbot-api/budget.json` |
 
-Daily quotas are reserved **before** contacting providers, including failed or canceled calls. They persist atomically across process restarts; corrupt/unwritable state fails closed. Only a date and counts are stored, not questions, IPs, or answers. Minute limits are in memory. **Run exactly one API process**; multi-instance deployment requires a shared atomic quota store.
+Daily quotas are reserved **before** contacting providers, including failed or canceled calls. One search-enabled request can make two model calls (query planning, then the answer) and one search call; the quotas count accepted user requests, not model calls. Planning is capped at 512 output tokens and answering at 4,096. Quotas persist atomically across process restarts; corrupt/unwritable state fails closed. Only a date and counts are stored, not questions, IPs, or answers. Minute limits are in memory. **Run exactly one API process**; multi-instance deployment requires a shared atomic quota store.
 
 These are modest public-demo limits, not account-level authentication or a billing guarantee. Shared IPs share a quota; distributed clients can bypass IP limits but not the site's persisted daily caps. Use authentication and provider-side spending limits before offering larger quotas.
 
@@ -67,12 +69,13 @@ The example LiteLLM mappings in `deploy/litellm.example.yaml` document the curre
 ## How search works
 
 1. The user opts in for that turn. Search is off initially.
-2. The server sends either the custom query or the first 400 characters of the latest message to the fixed `https://api.tavily.com/search` endpoint, using `X-Tavily-Access-Mode: keyless`.
-3. Up to five valid, deduplicated public source URLs and 1,800-character snippets per source are accepted. The total upstream response is limited to 1 MiB. No redirects, arbitrary fetch endpoint, images, crawling, or extraction are enabled.
-4. The server sends structured, explicitly untrusted reference data to the chosen model through LiteLLM. The system prompt requests `[1](source:1)` citations; the browser also accepts plain `[1]` markers outside code/links, resolving only IDs of actual retrieved sources. Follow-up context retains source URLs.
-5. Failure, exhaustion, empty results, or timeout produces a visible error, not a silent fallback pretending to have researched an answer. Turn search off for an ordinary answer.
+2. The server asks the selected model, through LiteLLM, to interpret the full bounded conversation and return one JSON search query. For example, "search that for the latest" after discussing the James Webb Space Telescope should produce a telescope-news query, not a search for those literal words. The UI shows a brief preparation status, not the model's internal reasoning.
+3. The server validates the plan: exactly one query, at most 400 characters, no control characters or additional execution parameters. An unclear topic asks the user to clarify; malformed plans or planner failures do not fall back to blindly searching the latest message. Client-provided `searchQuery` fields are ignored.
+4. Only the planned query goes to the fixed `https://api.tavily.com/search` endpoint with `X-Tavily-Access-Mode: keyless`. Up to five valid, deduplicated public source URLs and 1,800-character snippets per source are accepted. The total upstream response is limited to 1 MiB. No redirects, arbitrary fetch endpoint, images, crawling, or extraction are enabled.
+5. The server sends structured, explicitly untrusted reference data to the chosen model through LiteLLM. The system prompt requests `[1](source:1)` citations; the browser also accepts plain `[1]` markers outside code/links, resolving only IDs of actual retrieved sources. Follow-up context retains source URLs, and the source panel identifies the planned query.
+6. Failure, exhaustion, empty results, or timeout produces a visible error, not a silent fallback pretending to have researched an answer. Turn search off for an ordinary answer. Stopping cancels planning, search, or answer generation as appropriate.
 
-[Tavily keyless access](https://docs.tavily.com/documentation/keyless) requires no account/key but is rate-limited with no documented numeric allowance or availability guarantee. The site's 80/day cap is **our** cap, not a promised provider allocation. Queries are disclosed to Tavily; your conversation and snippets are processed by your model provider. Do not put confidential information in searches.
+[Tavily keyless access](https://docs.tavily.com/documentation/keyless) requires no account/key but is rate-limited with no documented numeric allowance or availability guarantee. The site's 80/day cap is **our** cap, not a promised provider allocation. Generated queries may contain terms from earlier turns and are disclosed to Tavily; the full conversation stays with the existing model provider, not the search provider. The planner is instructed to omit unnecessary private information, but this is not guaranteed anonymization. Do not enable search for confidential discussions.
 
 ## Boundaries and limitations
 
@@ -137,12 +140,11 @@ journalctl -u chatbot-api --since '10 minutes ago' --no-pager
   "messages": [{"role": "user", "content": "Explain the Fetch API."}],
   "model": "gpt-5.6-sol",
   "mode": "standard",
-  "webSearch": true,
-  "searchQuery": "MDN Fetch API documentation"
+  "webSearch": true
 }
 ```
 
-The SSE stream emits `meta`, `status`, and `sources` objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
+The SSE stream emits `meta`, `status` (`planning`, `searching`, `thinking`), and `sources` (including the planned `query`) objects, `{ "content": "..." }` deltas, and `data: [DONE]` only after successful completion. With search off there is no planning/search call. Stream failures emit `{ "error": "...", "code": "...", "requestId": "..." }` with no completion marker. Validate completion, not HTTP 200 alone.
 
 ```bash
 npm test --prefix api
@@ -152,6 +154,6 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Node tests exercise validation, persistent quotas, fixed search routing, data bounds, stream errors and cancellation. Playwright uses mocked APIs for deterministic desktop/mobile checks without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
+Node tests exercise validation, persistent quotas, context-aware query planning, fixed search routing, data bounds, stream errors and cancellation. Playwright uses mocked APIs and incremental streams for deterministic desktop/mobile checks, including preserved reading position, without spending provider credits. CI runs these checks on pushes/PRs; it does **not** deploy production or need API credentials.
 
 Built by Jawon Kim. MIT licensed.

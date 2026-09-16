@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { completedHistory, consumeStream, remarkCitations, safeLink } from './chat.mjs';
@@ -7,11 +7,9 @@ function Icon({ name, ...props }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
     arrow: <path d="m6 12 6-6 6 6M12 6v13" />,
-    search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></>,
     globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18" /></>,
     spark: <path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" />,
     copy: <><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V3H3v13h5" /></>,
-    download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />,
     moon: <path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5Z" />,
     sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1" /></>,
     retry: <path d="M3 10a9 9 0 1 1 2 8M3 4v6h6" />,
@@ -45,13 +43,6 @@ function Answer({ message }) {
   >{message.content}</Markdown>;
 }
 
-const prompts = [
-  { icon: 'globe', title: 'Explore what is new', text: 'What are the latest developments in space exploration this week?', search: true },
-  { icon: 'spark', title: 'Make it make sense', text: 'Explain how large language models work using a simple analogy.', search: false },
-  { icon: 'search', title: 'Compare with sources', text: 'Compare React and Svelte for a small personal website using current documentation.', search: true },
-  { icon: 'plus', title: 'Find the right words', text: 'Help me turn a rough idea into a clear, friendly email. Ask me what I want to say.', search: false }
-];
-
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -61,7 +52,6 @@ export default function App() {
   const [model, setModel] = useState('');
   const [mode, setMode] = useState('standard');
   const [webSearch, setWebSearch] = useState(false);
-  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [showLatest, setShowLatest] = useState(false);
@@ -69,7 +59,7 @@ export default function App() {
   const abortRef = useRef(null);
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
-  const atBottom = useRef(true);
+  const latestTurnId = messages.at(-2)?.id;
   const activeModel = config?.availableModels.find((option) => option.value === model);
   const maxMessage = config?.limits.maxMessageLength || 12000;
 
@@ -105,9 +95,21 @@ export default function App() {
   useEffect(() => {
     if (activeModel?.supportsSarcastic === false) setMode('standard');
   }, [activeModel]);
+  const updateLatestVisibility = useCallback(() => {
+    const element = scrollRef.current;
+    if (element) setShowLatest(element.scrollHeight - element.scrollTop - element.clientHeight > 40);
+  }, []);
+  useLayoutEffect(() => {
+    // Reveal a newly submitted turn once; streamed text must not move the reader.
+    if (latestTurnId && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    updateLatestVisibility();
+  }, [latestTurnId, updateLatestVisibility]);
+  useEffect(updateLatestVisibility, [messages, updateLatestVisibility]);
   useEffect(() => {
-    if (atBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages]);
+    const observer = new ResizeObserver(updateLatestVisibility);
+    observer.observe(scrollRef.current);
+    return () => observer.disconnect();
+  }, [updateLatestVisibility]);
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -121,32 +123,30 @@ export default function App() {
     if (abortRef.current || !config || !text.trim()) return;
     const base = retry ? messages.slice(0, -2) : messages;
     const useSearch = webSearch;
-    const searchQuery = query.trim();
     const history = [...completedHistory(base), { role: 'user', content: text.trim() }];
     if (history.length > config.limits.maxMessages || history.reduce((size, message) => size + message.content.length, 0) > config.limits.maxContextLength) {
-      setNotice('This conversation has reached its context limit. Download it, then start a new chat.');
+      setNotice('This conversation has reached its context limit. Start a new chat to continue.');
       return;
     }
     const controller = new AbortController();
     abortRef.current = controller;
-    const user = { id: crypto.randomUUID(), role: 'user', content: text.trim(), webSearch: useSearch, searchQuery };
+    const user = { id: crypto.randomUUID(), role: 'user', content: text.trim(), webSearch: useSearch };
     const answer = {
       id: crypto.randomUUID(), role: 'assistant', content: '', model: activeModel?.label || model,
-      status: 'pending', stage: useSearch ? 'Searching the web...' : 'Thinking it through...',
+      status: 'pending', stage: useSearch ? 'Preparing a search...' : 'Generating a response...',
       webSearch: useSearch, sources: []
     };
     setMessages([...base, user, answer]);
     if (!retry) setInput('');
     setBusy(true);
     setNotice('');
-    atBottom.current = true;
     let content = '';
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ messages: history, model, mode, webSearch: useSearch, ...(useSearch && searchQuery ? { searchQuery } : {}) })
+        body: JSON.stringify({ messages: history, model, mode, webSearch: useSearch })
       });
       await consumeStream(response, (event) => {
         if (event.type === 'status') updateMessage(answer.id, { stage: event.message });
@@ -167,31 +167,15 @@ export default function App() {
       controller.abort();
       abortRef.current = null;
       setBusy(false);
-      inputRef.current?.focus({ preventScroll: true });
     }
   }
 
   function newChat() {
-    if (messages.length && !window.confirm('Clear this conversation? Download it first if you want to keep a copy.')) return;
+    if (messages.length && !window.confirm('Clear this conversation and start a new one?')) return;
     setMessages([]);
     setInput('');
-    setQuery('');
     setNotice('New chat started.');
     inputRef.current?.focus();
-  }
-
-  function download() {
-    const text = ['# Jawon Chat', ...messages.map((message) =>
-      `## ${message.role === 'user' ? 'You' : message.model}\n\n${message.content}${message.status && message.status !== 'complete' ? '\n\n[Response incomplete]' : ''}` +
-      (message.sources?.length ? '\n\nSources:\n' + message.sources.map((source) => `${source.id}. ${source.title}: ${source.url}`).join('\n') : '')
-    )].join('\n\n');
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `jawon-chat-${new Date().toISOString().slice(0, 10)}.md`;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice('Conversation downloaded to your device.');
   }
 
   async function copy(text) {
@@ -203,74 +187,31 @@ export default function App() {
     }
   }
 
-  function choosePrompt(prompt) {
-    setInput(prompt.text);
-    setWebSearch(prompt.search && config?.search.enabled === true);
-    inputRef.current?.focus();
-  }
-
   return (
     <div className="workspace">
       <a className="skip-link" href="#chat-input">Skip to message</a>
-      <aside className="sidebar" aria-label="Workspace">
-        <a className="brand" href="https://www.jawon.kim" aria-label="Jawon's website">
-          <span className="brand-mark"><Icon name="spark" /></span>
-          <span>jawon<span className="brand-light"> / chat</span></span>
-        </a>
-        <button className="new-chat" onClick={newChat} disabled={busy}><Icon name="plus" />New conversation</button>
-        <div className="sidebar-note">
-          <span className="eyebrow">A space for curiosity</span>
-          <h2>Good questions.<br />Thoughtful answers.</h2>
-          <p>Switch perspectives with different models. Look beyond the conversation with web search.</p>
-        </div>
-        <div className="sidebar-bottom">
-          <div className="privacy-note"><span className="status-dot" />History lives in this tab</div>
-          <p>Chats stay in page memory, not browser storage. Reloading clears them. Your model provider processes messages.</p>
-          <div className="sidebar-footer">
-            <span>Powered by LiteLLM</span>
-            <button className="icon-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} title="Change theme"><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
-          </div>
-        </div>
-      </aside>
-
       <main className="main-panel">
         <header className="topbar">
-          <div className="mobile-brand"><Icon name="spark" /><strong>jawon / chat</strong></div>
+          <h1 className="brand">챗자피티</h1>
           <div className="model-control">
-            <label htmlFor="chat-model">Your model</label>
+            <label htmlFor="chat-model" className="sr-only">Your model</label>
             <select id="chat-model" value={model} onChange={(event) => setModel(event.target.value)} disabled={busy || !config}>
               {!config && <option value="">Connecting...</option>}
               {config?.availableModels.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </div>
           <div className="topbar-actions">
-            <span className="session-label">챗자피티, reimagined</span>
-            <button className="icon-button" onClick={download} disabled={!messages.length || busy} aria-label="Download conversation" title="Download conversation"><Icon name="download" /></button>
-            <button className="icon-button mobile-new" onClick={newChat} disabled={busy} aria-label="New conversation" title="New conversation"><Icon name="plus" /></button>
-            <button className="icon-button mobile-theme" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`}><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
+            <button className="new-chat" onClick={newChat} disabled={busy} aria-label="New conversation" title="New conversation"><Icon name="plus" /><span>New chat</span></button>
+            <button className="icon-button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} title="Change theme"><Icon name={theme === 'light' ? 'moon' : 'sun'} /></button>
           </div>
         </header>
 
         {configError && <div className="config-error" role="alert"><span>{configError}</span><button onClick={() => setConfigAttempt((value) => value + 1)}>Reconnect</button></div>}
 
         <div className="conversation-area">
-          <div className="conversation-scroll" ref={scrollRef} onScroll={() => {
-            const element = scrollRef.current;
-            atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
-            setShowLatest(!atBottom.current);
-          }}>
+          <div className="conversation-scroll" ref={scrollRef} onScroll={updateLatestVisibility} tabIndex={0} role="region" aria-label="Conversation area">
             {!messages.length ? (
-              <section className="welcome" aria-labelledby="welcome-heading">
-                <span className="welcome-badge"><Icon name="spark" />A clearer way to think</span>
-                <h1 id="welcome-heading">Think it through.<br /><span>Look it up.</span></h1>
-                <p>A second perspective for your ideas, questions, and next big thing. Pick a model and make yourself at home.</p>
-                <div className="prompt-grid">
-                  {prompts.map((prompt) => <button key={prompt.title} className="prompt-card" onClick={() => choosePrompt(prompt)} disabled={!config}>
-                    <Icon name={prompt.icon} /><strong>{prompt.title}</strong>
-                    <span>{prompt.search ? 'Explore with web sources' : 'Start a conversation'}<Icon name="link" width="14" height="14" /></span>
-                  </button>)}
-                </div>
-              </section>
+              <div className="empty-state"><p>Type a message to start.</p></div>
             ) : (
               <section className="messages" role="log" aria-label="Conversation" aria-live="off">
                 {messages.map((message, index) => (
@@ -301,9 +242,8 @@ export default function App() {
             )}
           </div>
           {showLatest && messages.length > 0 && <button className="latest-button" onClick={() => {
-            atBottom.current = true;
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-            setShowLatest(false);
+            updateLatestVisibility();
           }}><Icon name="down" width="16" height="16" />Latest</button>}
         </div>
 
@@ -312,7 +252,7 @@ export default function App() {
             <label className="sr-only" htmlFor="chat-input">Message</label>
             <textarea
               id="chat-input" ref={inputRef} rows={1} value={input} maxLength={maxMessage}
-              placeholder={webSearch ? 'Ask something worth looking up...' : 'Ask anything, or think out loud...'}
+              placeholder="Type your message..."
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
@@ -324,13 +264,13 @@ export default function App() {
             />
             <div className="composer-controls">
               <div className="composer-options">
-                <button type="button" className={`search-toggle ${webSearch ? 'active' : ''}`} aria-pressed={webSearch} disabled={busy || !config?.search.enabled} onClick={() => setWebSearch(!webSearch)}>
+                <button type="button" className={`search-toggle ${webSearch ? 'active' : ''}`} aria-pressed={webSearch} aria-describedby="composer-help" disabled={busy || !config?.search.enabled} onClick={() => setWebSearch(!webSearch)}>
                   <Icon name="globe" width="16" height="16" />Search web<span className="toggle-track" />
                 </button>
                 <div className="tone-control">
                   <label className="sr-only" htmlFor="chat-tone">Response tone</label>
-                  <select id="chat-tone" value={mode} onChange={(event) => setMode(event.target.value)} disabled={busy || activeModel?.supportsSarcastic === false} title={activeModel?.supportsSarcastic === false ? 'This model uses the friendly tone.' : 'Response tone'}>
-                    <option value="standard">Friendly</option><option value="sarcastic">Playful</option>
+                  <select id="chat-tone" value={mode} onChange={(event) => setMode(event.target.value)} disabled={busy || activeModel?.supportsSarcastic === false} title={activeModel?.supportsSarcastic === false ? 'This model uses the standard tone.' : 'Response tone'}>
+                    <option value="standard">Standard</option><option value="sarcastic">Sarcastic</option>
                   </select>
                 </div>
               </div>
@@ -340,17 +280,12 @@ export default function App() {
                   : <button className="send-button" type="submit" disabled={!config || !input.trim()} aria-label="Send message" title="Send message"><Icon name="arrow" /></button>}
               </div>
             </div>
-            {webSearch && <div className="search-settings">
-              <label htmlFor="search-query">Search query <span>(optional)</span></label>
-              <input id="search-query" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={config?.search.maxQueryLength || 400} placeholder="Use my message, or enter a focused search" disabled={busy} />
-              <p>Your query, or the first 400 characters of this message, goes to Tavily. Avoid sensitive information. Free search has shared limits.</p>
-            </div>}
           </form>
           <div className="composer-help" id="composer-help">
-            <span>AI can make mistakes. Check important answers{webSearch ? ' against the sources.' : '.'}</span>
+            <span>{webSearch ? 'Search terms from this chat are sent to Tavily.' : 'AI can make mistakes. Check important answers.'}</span>
             <span className="keyboard-hint">Enter to send · Shift + Enter for a new line</span>
           </div>
-          <div className="live-notice" role="status" aria-live="polite">{notice || (busy ? 'Generating your response...' : 'Chats clear when you reload. Download to keep a copy.')}</div>
+          <div className="live-notice" role="status" aria-live="polite">{notice || (busy ? 'Generating your response...' : 'Reloading clears this chat.')}</div>
         </div>
       </main>
     </div>

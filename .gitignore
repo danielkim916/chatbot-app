@@ -4,7 +4,6 @@ node_modules/
 # development
 .vscode/
 .vs/
-.github/
 
 # local settings
 .env
@@ -36,6 +35,9 @@ local.settings.json
 
 node_modules
 dist
+dist-*/
+playwright-report/
+test-results/
 
 # Local python packages
 .python_packages/

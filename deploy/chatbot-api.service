@@ -1,0 +1,35 @@
+[Unit]
+Description=Jawon Chat API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=danielkim
+Group=danielkim
+WorkingDirectory=/home/danielkim/chatbot-app/api
+ExecStart=/usr/bin/node /home/danielkim/chatbot-app/api/server.js
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3001
+Environment=CHAT_ORIGIN=https://chat.jawon.kim
+Environment=CHAT_STATE_FILE=/var/lib/chatbot-api/budget.json
+StateDirectory=chatbot-api
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/home/danielkim/.ssh -/home/danielkim/litellm-proxy -/home/danielkim/.copilot
+
+[Install]
+WantedBy=multi-user.target

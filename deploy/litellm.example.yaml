@@ -1,0 +1,45 @@
+model_list:
+  - model_name: gpt-5.6-sol
+    model_info:
+      mode: responses
+      supports_vision: true
+    litellm_params:
+      model: github_copilot/gpt-5.6-sol
+      drop_params: true
+      extra_headers:
+        editor-version: "vscode/1.112.0"
+        editor-plugin-version: "copilot-chat/1.0.11"
+  - model_name: gpt-5.6-luna
+    model_info:
+      mode: responses
+      supports_vision: true
+    litellm_params:
+      model: github_copilot/gpt-5.6-luna
+      drop_params: true
+      extra_headers:
+        editor-version: "vscode/1.112.0"
+        editor-plugin-version: "copilot-chat/1.0.11"
+  - model_name: gpt-5.6-terra
+    model_info:
+      mode: responses
+      supports_vision: true
+    litellm_params:
+      model: github_copilot/gpt-5.6-terra
+      drop_params: true
+      extra_headers:
+        editor-version: "vscode/1.112.0"
+        editor-plugin-version: "copilot-chat/1.0.11"
+  - model_name: claude-opus-4.8
+    litellm_params:
+      model: github_copilot/claude-opus-4.8
+      drop_params: true
+      extra_headers:
+        editor-version: "vscode/1.112.0"
+        editor-plugin-version: "copilot-chat/1.0.11"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  drop_params: true
